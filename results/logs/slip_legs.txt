@@ -1,0 +1,20 @@
+
+===== task: slip  (14 targets, whole robot FAMILIES held out, 5 random splits) =====
+donor chosen by          mean gain              95% CI
+full (target+donor+diff)    -0.010   [-0.041, +0.026]
+differences only            -0.178   [-0.266, -0.102]
+donor features only         +0.003   [-0.028, +0.031]
+target features only        -0.108   [-0.218, -0.006]
+M2 distance                 -0.241   [-0.486, -0.036]
+size                        -0.107   [-0.193, -0.023]
+joint count                 -0.165   [-0.274, -0.067]
+random                      -0.248   [-0.354, -0.173]
+best in pool                +0.121   [+0.092, +0.147]
+  full (target+donor+diff) minus size         = +0.097  CI [+0.025, +0.167]  better on 64%
+  full (target+donor+diff) minus random       = +0.238  CI [+0.161, +0.331]  better on 100%
+  full (target+donor+diff) minus donor features only = -0.013  CI [-0.051, +0.027]  better on 43%
+  differences only minus size         = -0.072  CI [-0.113, -0.028]  better on 21%
+  differences only minus random       = +0.069  CI [+0.025, +0.113]  better on 79%
+  differences only minus donor features only = -0.181  CI [-0.269, -0.109]  better on 0%
+  donor features only minus size         = +0.110  CI [+0.034, +0.187]  better on 64%
+  donor features only minus random       = +0.251  CI [+0.177, +0.348]  better on 100%

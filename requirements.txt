@@ -1,0 +1,7 @@
+mujoco
+robot_descriptions
+numpy
+scipy
+scikit-learn
+joblib
+matplotlib
