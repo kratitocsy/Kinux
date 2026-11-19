@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kratitocsy/Kinux/contracts/event.schema.json",
+  "title": "Kinux event",
+  "description": "One line of a run's events.jsonl. The envelope is frozen; the data of each type may gain optional fields but required fields do not change within v1.",
+  "type": "object",
+  "required": ["v", "run_id", "seq", "ts", "type", "actor", "design_hash", "provenance", "data"],
+  "additionalProperties": false,
+  "properties": {
+    "v": { "const": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "seq": { "type": "integer", "minimum": 0, "description": "Monotonic, gap-free per run, assigned by the server." },
+    "ts": { "type": "string", "format": "date-time" },
+    "type": {
+      "enum": [
+        "run.started", "test.queued", "test.progress", "test.artifact", "test.result",
+        "mutation.result", "run.score", "run.finished", "agent.action", "result.stale",
+        "select", "highlight", "fault.propose", "fault.toggle", "param.set"
+      ]
+    },
+    "actor": { "$ref": "#/$defs/actor" },
+    "design_hash": { "$ref": "#/$defs/hash", "description": "Hash of the design version this event is about. Results for an older hash are stale." },
+    "provenance": { "enum": ["real", "recorded", "synthetic"], "description": "Where the data in this event came from. The UI must show it." },
+    "data": { "type": "object" }
+  },
+  "allOf": [
+    { "if": { "properties": { "type": { "const": "run.started" } }, "required": ["type"] }, "then": { "properties": { "data": { "$ref": "#/$defs/runStarted" } } } },
+    { "if": { "properties": { "type": { "const": "test.queued" } }, "required": ["type"] }, "then": { "properties": { "data": { "$ref": "#/$defs/testQueued" } } } },
+    { "if": { "properties": { "type": { "const": "test.progress" } }, "required": ["type"] }, "then": { "properties": { "data": { "$ref": "#/$defs/testProgress" } } } },
+    { "if": { "properties": { "type": { "const": "test.artifact" } }, "required": ["type"] }, "then": { "properties": { "data": { "$ref": "#/$defs/testArtifact" } } } },
+    { "if": { "properties": { "type": { "const": "test.result" } }, "required": ["type"] }, "then": { "properties": { "data": { "$ref": "#/$defs/testResult" } } } },
+    { "if": { "properties": { "type": { "const": "mutation.result" } }, "required": ["type"] }, "then": { "properties": { "data": { "$ref": "#/$defs/mutationResult" } } } },
+    { "if": { "properties": { "type": { "const": "run.score" } }, "required": ["type"] }, "then": { "properties": { "data": { "$ref": "#/$defs/runScore" } } } },
+    { "if": { "properties": { "type": { "const": "run.finished" } }, "required": ["type"] }, "then": { "properties": { "data": { "$ref": "#/$defs/runFinished" } } } },
+    { "if": { "properties": { "type": { "const": "agent.action" } }, "required": ["type"] }, "then": { "properties": { "data": { "$ref": "#/$defs/agentAction" } } } },
+    { "if": { "properties": { "type": { "const": "result.stale" } }, "required": ["type"] }, "then": { "properties": { "data": { "$ref": "#/$defs/resultStale" } } } },
+    { "if": { "properties": { "type": { "const": "select" } }, "required": ["type"] }, "then": { "properties": { "data": { "$ref": "#/$defs/select" } } } },
+    { "if": { "properties": { "type": { "const": "highlight" } }, "required": ["type"] }, "then": { "properties": { "data": { "$ref": "#/$defs/highlight" } } } },
+    { "if": { "properties": { "type": { "const": "fault.propose" } }, "required": ["type"] }, "then": { "properties": { "data": { "$ref": "#/$defs/faultPropose" } } } },
+    { "if": { "properties": { "type": { "const": "fault.toggle" } }, "required": ["type"] }, "then": { "properties": { "data": { "$ref": "#/$defs/faultToggle" } } } },
+    { "if": { "properties": { "type": { "const": "param.set" } }, "required": ["type"] }, "then": { "properties": { "data": { "$ref": "#/$defs/paramSet" } } } }
+  ],
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "actor": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["human", "builder", "villain", "solver", "system"] },
+        "id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "reasonCode": {
+      "enum": [
+        "no_model", "blackbox", "tool_missing", "timeout", "netlist_unsupported", "sim_nonconverge",
+        "out_of_scope", "no_material_data", "mesh_failed", "mesh_not_converged", "unsupported_contact", "tool_error"
+      ]
+    },
+    "runStarted": {
+      "type": "object",
+      "required": ["project", "domain", "tool_versions", "source"],
+      "properties": {
+        "project": { "type": "string" },
+        "domain": { "type": "string", "description": "Open string, for example electronics, mechanical, robotics." },
+        "design_artifact_ref": { "type": "string" },
+        "tool_versions": { "type": "object", "additionalProperties": { "type": "string" } },
+        "source": { "enum": ["recorded", "synthetic", "live"] }
+      }
+    },
+    "testQueued": {
+      "type": "object",
+      "required": ["test_id", "title", "layer", "solver"],
+      "properties": {
+        "test_id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string" },
+        "layer": { "type": "string", "description": "Open string, for example netlist, schematic, pcb, mechanical." },
+        "solver": { "type": "string" },
+        "requirement_ids": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "testProgress": {
+      "type": "object",
+      "required": ["test_id", "pct"],
+      "properties": {
+        "test_id": { "type": "string" },
+        "pct": { "type": "number", "minimum": 0, "maximum": 100 },
+        "message": { "type": "string" }
+      }
+    },
+    "testArtifact": {
+      "type": "object",
+      "required": ["test_id", "artifact_id", "kind", "uri", "sha256", "bytes", "mime"],
+      "properties": {
+        "test_id": { "type": "string" },
+        "artifact_id": { "type": "string" },
+        "kind": { "enum": ["schematic_svg", "pcb_svg", "waveform", "mesh_glb", "thermal_field", "stress_field", "mj_trajectory", "log", "report", "other"] },
+        "uri": { "type": "string", "description": "Relative to the run folder." },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "mime": { "type": "string" }
+      }
+    },
+    "testResult": {
+      "type": "object",
+      "required": ["test_id", "subject", "verdict"],
+      "properties": {
+        "test_id": { "type": "string" },
+        "subject": { "type": "string", "description": "\"baseline\" for the original design, otherwise a mutant id." },
+        "verdict": { "enum": ["PASS", "FAIL", "NOT_CHECKED", "ERROR"] },
+        "measured": { "type": ["number", "string"] },
+        "limit": { "type": ["number", "string"] },
+        "units": { "type": "string" },
+        "reason_code": { "$ref": "#/$defs/reasonCode" },
+        "reason": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "verdict": { "enum": ["NOT_CHECKED", "ERROR"] } }, "required": ["verdict"] },
+          "then": { "required": ["reason_code"], "properties": { "reason_code": { "$ref": "#/$defs/reasonCode" } } }
+        }
+      ]
+    },
+    "mutationResult": {
+      "type": "object",
+      "required": ["mutant_id", "target", "description", "layer", "origin", "status", "killed_by"],
+      "properties": {
+        "mutant_id": { "type": "string", "minLength": 1 },
+        "target": { "type": "string" },
+        "description": { "type": "string" },
+        "layer": { "type": "string" },
+        "origin": { "enum": ["fixed", "agent", "hidden"] },
+        "status": { "enum": ["killed", "survived", "not_checked", "equivalent", "error"] },
+        "killed_by": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "killed" } }, "required": ["status"] },
+          "then": { "properties": { "killed_by": { "type": "array", "minItems": 1 } } },
+          "else": { "properties": { "killed_by": { "type": "array", "maxItems": 0 } } }
+        }
+      ]
+    },
+    "runScore": {
+      "type": "object",
+      "required": ["killed", "survived", "not_checked", "equivalent", "errors", "total", "checkable_fraction", "score", "ci_low", "ci_high"],
+      "properties": {
+        "killed": { "type": "integer", "minimum": 0 },
+        "survived": { "type": "integer", "minimum": 0 },
+        "not_checked": { "type": "integer", "minimum": 0 },
+        "equivalent": { "type": "integer", "minimum": 0 },
+        "errors": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 0 },
+        "checkable_fraction": { "type": "number", "minimum": 0, "maximum": 1 },
+        "score": { "type": ["number", "null"], "minimum": 0, "maximum": 1, "description": "killed / (killed + survived); null when nothing was checkable." },
+        "ci_low": { "type": ["number", "null"] },
+        "ci_high": { "type": ["number", "null"] }
+      }
+    },
+    "runFinished": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["completed", "failed", "cancelled"] },
+        "summary": { "type": "string" }
+      }
+    },
+    "agentAction": {
+      "type": "object",
+      "required": ["action", "summary"],
+      "properties": {
+        "action": { "type": "string" },
+        "target": { "type": "string" },
+        "summary": { "type": "string" }
+      }
+    },
+    "resultStale": {
+      "type": "object",
+      "required": ["test_ids", "current_design_hash"],
+      "properties": {
+        "test_ids": { "type": "array", "items": { "type": "string" } },
+        "current_design_hash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "select": {
+      "type": "object",
+      "required": ["ids"],
+      "properties": {
+        "ids": { "type": "array", "items": { "type": "string" } },
+        "tab": { "type": "string" }
+      }
+    },
+    "highlight": {
+      "type": "object",
+      "required": ["ids", "severity"],
+      "properties": {
+        "ids": { "type": "array", "items": { "type": "string" } },
+        "severity": { "enum": ["info", "warning", "failure"] },
+        "note": { "type": "string" }
+      }
+    },
+    "faultPropose": {
+      "type": "object",
+      "required": ["fault_id", "target", "change", "rationale"],
+      "properties": {
+        "fault_id": { "type": "string" },
+        "target": { "type": "string" },
+        "change": { "type": "string" },
+        "params": { "type": "object" },
+        "rationale": { "type": "string" }
+      }
+    },
+    "faultToggle": {
+      "type": "object",
+      "required": ["fault_id", "on"],
+      "properties": {
+        "fault_id": { "type": "string" },
+        "on": { "type": "boolean" }
+      }
+    },
+    "paramSet": {
+      "type": "object",
+      "required": ["param", "value"],
+      "properties": {
+        "param": { "type": "string" },
+        "value": { "type": ["number", "string", "boolean"] }
+      }
+    }
+  }
+}

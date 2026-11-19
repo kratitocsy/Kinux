@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kratitocsy/Kinux/contracts/manifest.schema.json",
+  "title": "Kinux run manifest",
+  "description": "Lists the design files and artifacts of one run, each with a hash, so a run folder can be checked and replayed.",
+  "type": "object",
+  "required": ["v", "run_id", "design", "artifacts"],
+  "additionalProperties": false,
+  "properties": {
+    "v": { "const": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "design": {
+      "type": "object",
+      "required": ["adapter", "files"],
+      "additionalProperties": false,
+      "properties": {
+        "adapter": { "type": "string", "description": "Domain adapter, for example kicad, step, mjcf." },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "sha256"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string" },
+              "sha256": { "$ref": "#/$defs/hash" }
+            }
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "uri", "sha256", "label", "provenance"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "kind": { "enum": ["schematic_svg", "pcb_svg", "waveform", "mesh_glb", "thermal_field", "stress_field", "mj_trajectory", "log", "report", "other"] },
+          "uri": { "type": "string" },
+          "sha256": { "$ref": "#/$defs/hash" },
+          "label": { "type": "string" },
+          "provenance": { "enum": ["real", "recorded", "synthetic"] }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+  }
+}

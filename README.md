@@ -4,7 +4,7 @@
 
 A workspace where AI agents and engineers design hardware and machines together, and independent physics solvers check the results. The IDE is the long-term form. We start with a viewer and an extension that runs inside editors people already use, and only consider a standalone IDE once real users need one.
 
-> **Status: planning. There is no code in this repository yet.** Everything below describes what we intend to build and the order we intend to build it in. Nothing here has been proven.
+> **Status: just started.** The shared event, manifest and receipt formats and their tests exist (`contracts/`, `npm test`). There are no solvers, workers, viewer or MCP server yet, and the sample run is synthetic. Everything else below describes what we intend to build and the order we intend to build it in. Nothing here has been proven.
 
 The full plan is in [docs/PLAN.md](docs/PLAN.md): architecture, physics checks, the Villain loop, graph learning, the panels, the staged build, the proof test and its gates, and the risks.
 
@@ -33,7 +33,7 @@ AI models can now draft schematics, board layouts, enclosures and firmware from 
 
 | Stage | What | Status |
 |---|---|---|
-| 0 | Shared event and artifact formats, a sample 48V BLDC motor-driver project, one honestly labelled recorded run | not started |
+| 0 | Shared event and artifact formats, a sample 48V BLDC motor-driver project, one honestly labelled recorded run | formats, sample run and tests done; board not yet chosen |
 | 1 | Static viewer with all panels, fed by the recorded run | not started |
 | 2 | Run server, job queue, real ngspice and `kicad-cli` workers, first mutation runner | not started |
 | 3 | Relay, MCP server, VS Code-family extension, tests against Claude Code, Codex and Cursor | not started |

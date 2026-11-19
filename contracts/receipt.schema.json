@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kratitocsy/Kinux/contracts/receipt.schema.json",
+  "title": "Kinux evidence receipt",
+  "description": "Hashes of everything that went into a run, so it can be reproduced. A pre-check record, not a certification.",
+  "type": "object",
+  "required": ["v", "receipt_id", "created", "engine_version", "inputs", "tool_versions", "seeds", "check_set_sha", "operator_set_sha", "result_hashes", "score", "disclaimer"],
+  "additionalProperties": false,
+  "properties": {
+    "v": { "const": 1 },
+    "receipt_id": { "$ref": "#/$defs/hash" },
+    "created": { "type": "string", "format": "date-time" },
+    "engine_version": { "type": "string" },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "sha256"],
+        "additionalProperties": false,
+        "properties": { "path": { "type": "string" }, "sha256": { "$ref": "#/$defs/hash" } }
+      }
+    },
+    "tool_versions": { "type": "object", "additionalProperties": { "type": "string" } },
+    "seeds": { "type": "object", "additionalProperties": { "type": "integer" } },
+    "check_set_sha": { "$ref": "#/$defs/hash" },
+    "operator_set_sha": { "$ref": "#/$defs/hash" },
+    "result_hashes": { "type": "array", "items": { "$ref": "#/$defs/hash" } },
+    "score": { "$ref": "event.schema.json#/$defs/runScore" },
+    "disclaimer": { "const": "Pre-check linter. Not a certification and not a substitute for engineering sign-off." },
+    "signature": { "type": "string", "description": "Optional, added in a later version." }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+  }
+}

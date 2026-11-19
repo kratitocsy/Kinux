@@ -1,0 +1,23 @@
+{
+  "v": 1,
+  "run_id": "demo-divider-001",
+  "design": {
+    "adapter": "synthetic",
+    "files": [
+      {
+        "path": "divider.cir",
+        "sha256": "sha256:47409fa06f0000d2924cc2704ce0f50418374a689ead84a8ee555e232712a9f2"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "id": "wf-baseline",
+      "kind": "waveform",
+      "uri": "artifacts/wf-baseline.f32",
+      "sha256": "sha256:ad3546f5ca368c6cc92a6188684b823e57241ea862c4b2fc4f4d2b05dc392b24",
+      "label": "Baseline output (synthetic)",
+      "provenance": "synthetic"
+    }
+  ]
+}
