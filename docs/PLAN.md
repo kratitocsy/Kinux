@@ -115,6 +115,21 @@ The aim is to design a machine one part at a time, verify each part, and then fi
 2. **Subsystem.** Parts joined through their interfaces, for example driver board, motor, gearbox and housing as one joint actuator.
 3. **Machine.** Subsystems joined into a machine, tested against the machine's requirements (lift a given load, run a given time, stay under a given temperature).
 
+**Two ways to start.**
+
+1. **Start from one part.** Create a project for a single part, for example a motor driver board or a gearbox housing. It has its own requirements, interfaces, tests, Villain runs and score. When it is good enough, publish it to the parts library with its interface data and receipts, and any machine can use it.
+2. **Start from a whole machine.** Define the machine's requirements, then break it into subsystems and parts. Each part gets a budget (mass, power, heat, torque, space) and defined interfaces to its neighbours. Each part then becomes its own workspace, designed in detail with its own tests, and can be worked on in parallel by separate Builder agents and engineers. When the parts are ready, assemble them, run the system checks, and trace any failure back to the part and interface that caused it.
+
+Both use the same data model, so a part made on its own can be dropped into a machine later, and a part made inside a machine can be published and reused.
+
+**Rules for working across parts.**
+- **Interface changes need approval** from the owners of both sides and the integrator, because they change the neighbours' assumptions. Changes inside a part, within its interface and budget, do not.
+- **Staleness ripples upward.** When a part changes, every subsystem and machine result that used it is marked stale.
+- **Requirement traceability.** A matrix shows each requirement, which parts carry it, which tests cover it, and the verdict (pass, fail or not checked) at part, subsystem and machine level.
+- **Honest roll-up.** A machine is described as "parts verified, system not checked" until system tests have run. Its verdict can't be better than its weakest NOT_CHECKED.
+- **Parallel agents.** Each part can have its own Builder agent and Villain, with an Integrator agent checking interfaces and budgets across parts. A person can take over any part.
+- **The project tree** in the IDE is machine, subsystem, part, each with a status badge (verified, stale, failing, not checked), as in the explorer of the concept images.
+
 **Assembly checks.**
 - **Fit:** clearances and interference between parts.
 - **Interface compatibility:** do the two sides of every connection match in type and limits?
