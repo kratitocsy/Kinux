@@ -45,7 +45,7 @@ The long-term form is an IDE (the concept image). We start with a viewer and an 
 | Tier | When | Tools | Time |
 |---|---|---|---|
 | Fast | every edit, debounced | `kicad-cli` ERC/DRC, IPC-2152 trace current, ngspice transient and Monte Carlo | seconds |
-| Slow | pull request or on request | OpenFOAM thermal and airflow, OpenEMS signal integrity, parallel MuJoCo, structural FEA (CalculiX, Gmsh) | minutes to hours |
+| Slow | pull request or on request | OpenFOAM thermal and airflow, OpenEMS signal integrity, parallel MuJoCo, finite element analysis (static stress, thermal conduction, thermal stress, modal; CalculiX and Gmsh) | minutes to hours |
 
 **Background checks.** A new edit cancels older runs. Every result carries the hash of the design it checked and is shown greyed out as **stale** if the design has moved on. Notifications only for new failures and finished runs.
 
@@ -184,7 +184,45 @@ Panels show beside the agent, not inside its chat.
 
 **Probe first (about 6 agent-hours plus your screen time):** preview pane with a hosted URL versus localhost; docking beside Claude Code, Codex and Cursor; SSE through the preview pane and a cloud proxy; WASM and blob workers under the webview security rules; MCP Apps in each client; publishing to both the VS Code Marketplace and Open VSX; a fallback if Codex has no usable panel.
 
-## 9. Staged build
+## 9. Roadmap to the IDE
+
+Order of priority: **deterministic physics checks first, then agents and humans working together, then 2D and 3D panels streamed from the cloud into the coding-agent panels, then machines part by part, and the IDE last.** All durations are rough planning estimates.
+
+| Phase | What | Estimate |
+|---|---|---|
+| A | **Deterministic electrical core.** Shared formats; environment spike; `kicad-cli` rule checks, ngspice and trace-current checks; job queue, cache and hashed receipts; mutation engine and score; a `kinux verify` command. Gate A | 3 to 4 weeks |
+| B | **Agents and humans together, plus a first slow tier.** Event server with live progress and replay; background runs with debounce, cancel and stale marking; MCP tools; a command log with actor tags; one validated slow test per physics solver (the FEA slices below, OpenFOAM thermal, OpenEMS, MuJoCo) | 4 to 6 weeks |
+| C | **2D panels in the coding agents.** Schematic and PCB, waveforms, mutation table, timeline; relay and the Claude browser pane; VS Code extension beside the chat; probes for Claude Code, Codex and Cursor; one cloud server with tokens | 2 to 3 weeks |
+| D | **3D and interaction.** Board and enclosure; heat view; MuJoCo playback and the joint actuator demo; select, highlight, toggle faults and sliders with live re-runs | 3 to 4 weeks |
+| E | **Heavy physics on real assemblies.** Meshing and loads for real parts, coupled loads, OpenFOAM airflow, OpenEMS, parallel MuJoCo, GitHub Action on pull requests | 4 to 6 weeks |
+| F | **Machines part by part.** Parts library and interface contracts; joint actuator assembly; requirement traceability; a two-joint leg, then a small arm or rover | 6 to 8 weeks |
+| G | **Learning.** Training-friendly run logs from day one; lessons for agents; learned priorities; a graph model last | ongoing |
+| H | **Hand edits.** Locks, undo and diff view | 3 to 4 weeks |
+| I | **AI Villains and multi-model.** Generated faults; a builder from one vendor and an attacker from another | 2 to 4 weeks |
+| J | **Fabrication.** Enclosure fit and print tolerance checks; printer export through a local bridge, with a person pressing start | 3 to 4 weeks |
+| K | **The IDE.** Only if the extension can't do the job and real users need it | months |
+
+The proof test with hardware engineers starts when Phase A ends and runs in parallel (section 10). If it fails, we stop or change direction before the expensive phases.
+
+**Finite element analysis in Phase B: one small slice per kind, each checked against a hand calculation.**
+
+| Slice | What it checks | Hand-calculation check |
+|---|---|---|
+| Static stress | A bracket or housing under load: peak stress and deflection against material limits | Beam formulas for a cantilever |
+| Thermal conduction | Heat spreading from a hot component through a board, heat sink or housing | A plate or rod with a known answer |
+| Thermal stress | Parts expanding when hot (one way: temperatures in, stress out) | A bar held at both ends: stress = E x alpha x delta T |
+| Modal | Natural frequencies, for example a bracket resonating at motor speed | Cantilever frequency formula |
+| Motor magnetics (later) | Torque and flux of the actuator's motor, with an open magnetic FEA tool | Datasheet torque constant |
+
+Open-source tools I'm aware of: CalculiX, Gmsh for meshing, Elmer, FEniCS and Code_Aster. Their current state and container support are unverified.
+
+Every FEA run checks that its answer stops changing as the mesh gets finer. If the mesh fails or that check fails, the verdict is NOT_CHECKED, never a pass. Wrong meshes, loads or material data give believable wrong answers, and 3D-printed parts are weaker in some directions than standard material data assumes. Villain faults for FEA: a heavier load, a thinner wall, a weaker material, a hotter ambient.
+
+**Environment status (unverified).** Python 3.13, Node 22 and a Docker client are present in the cloud session. Whether the Docker daemon runs and can pull images is not confirmed. `pip` can fetch MuJoCo, and `apt` did not find ngspice, which may only mean its package index was stale. The environment spike in Phase A settles this. If the cloud sandbox can't run the solver containers, that work runs on the founder's machine or a rented server.
+
+### 9.1 Stage table from the first planning pass (viewer-first order)
+
+This table and its step lists came from the first planning pass, written for a viewer-first order. They map to the phases above: stage 0 is part of A, stage 2 spans A and B, stages 1 and 3 are C, and stage 4 is D.
 
 Rough: about 290 agent-hours, 4 to 6 weeks with 3 to 4 agents in parallel, if usage limits allow. Week 1 starts when the founder confirms.
 
