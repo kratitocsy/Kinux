@@ -1,6 +1,8 @@
 # Kinux
 
-A workspace where AI agents and engineers design hardware and machines together, and independent physics solvers check the results.
+**A workspace IDE for physical AI and hardware.**
+
+A workspace where AI agents and engineers design hardware and machines together, and independent physics solvers check the results. The IDE is the long-term form. We start with a viewer and an extension that runs inside editors people already use, and only consider a standalone IDE once real users need one.
 
 > **Status: planning. There is no code in this repository yet.** Everything below describes what we intend to build and the order we intend to build it in. Nothing here has been proven.
 
