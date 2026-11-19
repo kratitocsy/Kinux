@@ -27,7 +27,7 @@ Legend: **F** = founder, **A** = agent, **R** = reviewer agent. "Needs" lists de
 
 | Step | What | Who | Hours | Done when |
 |---|---|---|---|---|
-| S2.0 | Environment spike in a clean container: does `kicad-cli` run headless, is ngspice output reproducible across runs, does Docker with no network and a read-only root still run both tools, cold versus warm times, does the `.control` sanitizer block shell commands, do KiCad netlist quirks still simulate | F or A | 3 | A table of timings and pinned image digests |
+| S2.0 | Environment spike in a clean container: does `kicad-cli` run headless, is ngspice output reproducible across runs, does Docker with no network and a read-only root still run both tools, cold versus warm times, does the `.control` sanitizer block shell commands, do KiCad netlist quirks still simulate | F or A | 3 | **Done** ([SPIKE-ENV.md](SPIKE-ENV.md)). No Docker daemon, so pinned apt versions stand in for image digests |
 | S2.1 | Contract freeze: a design hash in every event, an ERROR verdict, job and receipt schemas | A, R | 3 | The Stage 1 viewer plays the same recording unchanged |
 | S2.2 | Run server: append-only `events.jsonl`, SSE with `Last-Event-ID` resume, replay through the same handler, artifacts by hash, view and drive tokens | A | 8 | A replay is byte-identical to the live stream |
 | S2.3 | Job queue: SQLite WAL, leases with heartbeat, retries only for infrastructure failures, cancel flag, per-job timeout that kills the container | A | 6 | No orphan containers, no double execution |
