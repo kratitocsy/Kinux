@@ -6,6 +6,8 @@ A workspace where AI agents and engineers design hardware and machines together,
 
 > **Status: planning. There is no code in this repository yet.** Everything below describes what we intend to build and the order we intend to build it in. Nothing here has been proven.
 
+The full plan is in [docs/PLAN.md](docs/PLAN.md): architecture, physics checks, the Villain loop, graph learning, the panels, the staged build, the proof test and its gates, and the risks.
+
 ## The problem
 
 AI models can now draft schematics, board layouts, enclosures and firmware from short prompts. Models are statistical, though: they can't measure a real board, and they can't show that a design is safe. Published benchmarks still show frequent mistakes in AI-made circuits and layouts. As generating hardware gets cheaper, checking it becomes the bottleneck.
