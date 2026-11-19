@@ -207,6 +207,8 @@ Order of priority: **deterministic physics checks first, then agents and humans 
 | I | **Multi-model and hidden fault sets.** A builder from one vendor and an attacker from another; rotating hidden faults; Kinux's own model keys | 2 to 4 weeks |
 | J | **Fabrication.** Enclosure fit and print tolerance checks; printer export through a local bridge, with a person pressing start | 3 to 4 weeks |
 | K | **The IDE.** Only if the extension can't do the job and real users need it | months |
+| L | **Registry, import and datasets.** GitHub Action badges and public report pages; an index of public designs and parts; `kinux publish` and a GitHub app; MCP part search; an opt-in failure dataset and a public benchmark | 4 to 6 weeks, after the proof test |
+| M | **Kinux hosting.** Hardware-aware Git hosting with visual schematic, PCB and 3D diffs, physics checks on every pull request, large-file handling and part dependencies, with two-way sync to GitHub. Only if people ask for it | months |
 
 The proof test with hardware engineers starts when Phase A ends and runs in parallel (section 10). If it fails, we stop or change direction before the expensive phases.
 
@@ -277,6 +279,9 @@ Planned layout: `contracts/`, `viewer/`, `server/`, `workers/`, `extension/`, `m
 - **3D printers.** Enclosure fit and print-tolerance checks first. Sending jobs to printers (OctoPrint, Moonraker) only through a local bridge, and a human presses start. The cloud never reaches the printer directly.
 - **Whole machines.** See section 6: parts, interfaces, subsystems, then machines. The first demo is a joint actuator.
 - **Multi-model IDE.** Models behind one interface, so one vendor's model can build and another's can attack. Bring your own keys, or local models for privacy. A standalone IDE only if the extension can't do the job.
+
+- **Registry, import and datasets (phase L).** Badge-first: repos run the Kinux GitHub Action and get a public report page and a badge such as "score 82, 91% checkable", worded as scored, never certified. Then an index of public designs and parts searchable by function, interface and score; a one-command `kinux publish` and a read-only GitHub app that detect KiCad, STEP and MuJoCo projects; MCP tools (`search_parts`, `get_part`, `add_part_to_machine`) so agents can pick verified parts; version pinning for machines. The repo stays the owner's, private by default for teams. Datasets: a public benchmark of open boards with seeded bugs from the proof test, and an opt-in failure dataset of anonymised patterns (topology, fault type, caught or missed, numbers), never design files, released with dataset cards that state contents, licence and limits. Needs a lawyer for contribution terms and licences. Imported repos run only in the sandbox.
+- **Kinux hosting, a Git home for hardware (phase M).** Aim: be a clearly better home for hardware, not "replace GitHub". Reasons to switch: visual diffs of schematics, PCBs and 3D parts; physics checks and a trust score on every pull request; proper large-file handling; part registry and dependency updates; bill of materials and manufacturing release packages; two-way sync with GitHub so nobody is locked in. Build on an open-source Git server (Forgejo or Gitea) with hardware views on top, not from scratch. Only if users ask for it. Risks: hosting must never lose data, security and support costs, licence, takedown and safety questions, and competition from GitHub and hardware-focused hosts.
 
 ## 13. Who might pay (unknown)
 
