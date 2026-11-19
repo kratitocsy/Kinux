@@ -66,7 +66,13 @@ The long-term form is an IDE (the concept image). We start with a viewer and an 
 
 **Anti-gaming.** Hidden and random mutants, a public/hidden score gap, and a flag for tests that only restate baseline values. Open source cannot hide operators, so the hidden set needs a private release or plugin. This is probabilistic, not proof.
 
-**AI Villains (later).** Generate new faults beyond the fixed rules, validated as realistic and marked as agent-made.
+**AI Villains (early, through MCP).** The coding agent the user already has (Claude Code, Codex or Cursor) plays the Villain, so Kinux needs no model keys of its own at first. The MCP server exposes tools to propose and run faults, and MCP prompts for the Builder and Villain roles (prompt support in each client is unverified). It ships right after the fixed-rule engine, because AI faults need the same safe patching, running and scoring.
+- **A fault is data, not code:** a structured spec (target, change, parameters, rationale). Kinux applies it through the same patch mechanism as the fixed rules, re-parses the result, confirms the original design passes the check, and marks the fault `origin: agent`.
+- **Separate sessions** for Builder and Villain, so the Villain's hidden faults stay hidden. The Builder sees pass and fail counts, and descriptions of surviving faults only after a round.
+- **Receipts record the fault spec, not the model's reasoning,** so a replay is deterministic even though the proposal was not.
+- **Limits:** maximum rounds, a compute budget per run, and a stop rule when no new faults survive.
+- **Risks:** unrealistic or duplicate faults, usage cost on the user's own plan, and a Villain that only finds easy wins. Faults are validated for realism and deduplicated before they count toward the score.
+- A model router and Kinux's own keys, with a builder from one vendor and an attacker from another, come in phase I.
 
 ## 5. Graph learning (the "supermemory")
 
@@ -177,7 +183,7 @@ Both use the same data model, so a part made on its own can be dropped into a ma
 
 1. **A plain web page.** Works in the Claude Code desktop browser pane. Serve it with a 200 at `/` and bind both IPv4 and IPv6, because user reports describe hangs on redirects and on IPv6-only binds *(unverified)*.
 2. **A VS Code-family extension** with webview tabs in the editor area, beside the chat. Works in VS Code; Cursor and Codex layouts need probing, since reports say Cursor reserves its right sidebar for its own agent *(unverified)*.
-3. **An MCP server** for agents: `start_run`, `get_status`, `wait_for_run`, `get_findings`, `open_viewer`, `get_selection`, `get_changes`, `highlight`, `toggle_fault`, `set_param`, `rerun_test`.
+3. **An MCP server** for agents: `start_run`, `get_status`, `wait_for_run`, `get_findings`, `open_viewer`, `get_selection`, `get_changes`, `highlight`, `toggle_fault`, `set_param`, `rerun_test`, and for the Villain `propose_fault`, `run_faults`, `get_survivors`.
 4. **MCP Apps (`ui://` inside the chat)** is a bonus only. Support is inconsistent across clients *(unverified)*.
 
 Panels show beside the agent, not inside its chat.
@@ -190,7 +196,7 @@ Order of priority: **deterministic physics checks first, then agents and humans 
 
 | Phase | What | Estimate |
 |---|---|---|
-| A | **Deterministic electrical core.** Shared formats; environment spike; `kicad-cli` rule checks, ngspice and trace-current checks; job queue, cache and hashed receipts; mutation engine and score; a `kinux verify` command. Gate A | 3 to 4 weeks |
+| A | **Deterministic electrical core.** Shared formats; environment spike; `kicad-cli` rule checks, ngspice and trace-current checks; job queue, cache and hashed receipts; mutation engine and score; a `kinux verify` command. Gate A. Then an **MCP server** so coding agents can run checks and play the Villain (AI Villain v0, run by the host agent, see section 4) | 4 to 5 weeks |
 | B | **Agents and humans together, plus a first slow tier.** Event server with live progress and replay; background runs with debounce, cancel and stale marking; MCP tools; a command log with actor tags; one validated slow test per physics solver (the FEA slices below, OpenFOAM thermal, OpenEMS, MuJoCo) | 4 to 6 weeks |
 | C | **2D panels in the coding agents.** Schematic and PCB, waveforms, mutation table, timeline; relay and the Claude browser pane; VS Code extension beside the chat; probes for Claude Code, Codex and Cursor; one cloud server with tokens | 2 to 3 weeks |
 | D | **3D and interaction.** Board and enclosure; heat view; MuJoCo playback and the joint actuator demo; select, highlight, toggle faults and sliders with live re-runs | 3 to 4 weeks |
@@ -198,7 +204,7 @@ Order of priority: **deterministic physics checks first, then agents and humans 
 | F | **Machines part by part.** Parts library and interface contracts; joint actuator assembly; requirement traceability; a two-joint leg, then a small arm or rover | 6 to 8 weeks |
 | G | **Learning.** Training-friendly run logs from day one; lessons for agents; learned priorities; a graph model last | ongoing |
 | H | **Hand edits.** Locks, undo and diff view | 3 to 4 weeks |
-| I | **AI Villains and multi-model.** Generated faults; a builder from one vendor and an attacker from another | 2 to 4 weeks |
+| I | **Multi-model and hidden fault sets.** A builder from one vendor and an attacker from another; rotating hidden faults; Kinux's own model keys | 2 to 4 weeks |
 | J | **Fabrication.** Enclosure fit and print tolerance checks; printer export through a local bridge, with a person pressing start | 3 to 4 weeks |
 | K | **The IDE.** Only if the extension can't do the job and real users need it | months |
 
