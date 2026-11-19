@@ -10,12 +10,13 @@
 
 ## 1. What we are building
 
-A workspace where AI agents and engineers design hardware and machines together, and independent physics solvers check the results. Four ideas fit together:
+A workspace where AI agents and engineers design hardware and machines together, and independent physics solvers check the results. Five ideas fit together:
 
 1. **Agents propose, solvers decide.** A Builder agent changes the design. Deterministic tools give the verdict: PASS, FAIL or NOT_CHECKED. A model never judges pass or fail.
 2. **Villain agents break the design on purpose** (mutation testing and fault injection for hardware). The share of injected faults the tests catch is a trust score. Faults that survive show where to look.
 3. **A live, shared workspace.** Checks run in the background and stream results into 2D and 3D panels. People and agents act on the same scene and see each other's changes.
 4. **The system learns from every fault** (graph memory, later).
+5. **Machines are designed part by part.** Each part is verified on its own, then parts are fitted through their interfaces into subsystems and machines (section 6). The first whole-machine demo is a joint actuator, not a full robot.
 
 The long-term form is an IDE (the concept image). We start with a viewer and an extension inside editors people already use.
 
@@ -86,7 +87,60 @@ Start with a plain knowledge graph and simple graph-feature models. A GNN needs 
 
 **Privacy.** Local to the project by default. Sharing is opt-in and anonymized (patterns, not files). A public corpus comes from open-source boards.
 
-## 6. Panels (what the mockup maps to)
+## 6. Part by part, then one machine
+
+The aim is to design a machine one part at a time, verify each part, and then fit the parts into one machine. The humanoid concept below is the far end of this. The first whole-machine demo is much smaller: one joint actuator.
+
+![Second concept render: a humanoid](concept-humanoid.webp)
+
+*Concept render of a humanoid robot with coupled structural, thermal and control analysis. Like the first image, it is not a working product, and none of the numbers in it come from real runs.*
+
+**A part is a verified module.** A board, a motor, a gearbox, a housing, a battery, a sensor or a bracket. Each has:
+- geometry (a STEP file for mechanical parts, a KiCad design for boards),
+- **interfaces**, which are the contract with the rest of the machine,
+- parameters, and the requirements it is meant to meet,
+- a verification record per domain, with its mutation score and receipt.
+
+**Interfaces are the contract.**
+
+| Kind | What it states |
+|---|---|
+| Power | voltage range, continuous and peak current, inrush |
+| Mechanical | mount pattern, torque and force limits, mass, centre of gravity, clearances |
+| Signal | protocol, voltage levels, timing |
+| Thermal | dissipation, maximum temperature, heat path |
+
+**Three levels, each verified before the next.**
+1. **Part.** Checked on its own: a board with ngspice and design-rule checks, a housing with structural analysis, a motor against its datasheet curves. Part-level mutation scoring applies here.
+2. **Subsystem.** Parts joined through their interfaces, for example driver board, motor, gearbox and housing as one joint actuator.
+3. **Machine.** Subsystems joined into a machine, tested against the machine's requirements (lift a given load, run a given time, stay under a given temperature).
+
+**Assembly checks.**
+- **Fit:** clearances and interference between parts.
+- **Interface compatibility:** do the two sides of every connection match in type and limits?
+- **Budgets:** power, mass, heat and torque adding up across the machine.
+- **System simulation:** MuJoCo motion, with its torques passed to the structural and thermal checks (one-way chains first).
+- Anything the checks can't model, such as vibration coupling, EMI between parts or heat soak, is reported as NOT_CHECKED.
+
+**Machine-level mutation.** Swap a part for an out-of-spec variant, change one part's parameter, or overload a joint (the 1.8x hip overload in the concept image), then see which machine-level tests notice. This is the same engine at a larger scale.
+
+**Reuse.** A verified part goes into a parts library with its interface data and receipts, so later machines start from known parts. This also becomes the part knowledge base for graph learning (section 5). A part's record always names the version that was verified.
+
+**The machine is one graph.** Parts are nodes and interfaces are edges, the same design graph as everywhere else in the plan, so the viewer, the mutation engine and the learning model all read it.
+
+**First whole-machine demo: a joint actuator.** The 48V BLDC driver board from stage 0 is one of its parts. The others are a motor, a gearbox, a housing and an encoder.
+- MuJoCo supplies the torque load, ngspice and a simple thermal model give the heat, and structural analysis checks the housing.
+- A Villain overloads the joint (for example 1.8x torque), and the Builder strengthens the housing or the cooling.
+- Next steps, in order: a two-joint leg, then a small robot arm or rover. A full walking humanoid is the north star, not a milestone.
+- The Robolix repository already works with MuJoCo Menagerie robot models, which could supply robot models for the motion panel. Their licences need checking first.
+
+**Risks.**
+- Interface contracts miss hidden couplings, so a machine of individually verified parts can still fail.
+- Coupled simulation across domains is research-level. We chain one way and say what is not checked.
+- Parts change, so records must be tied to versions.
+- A walking humanoid involves contact and balance control that is much harder than anything in the early stages.
+
+## 7. Panels (what the mockup maps to)
 
 | In the concept image | Plan |
 |---|---|
@@ -104,7 +158,7 @@ Start with a plain knowledge graph and simple graph-feature models. A GNN needs 
 
 **Shared scene.** One design file plus an ordered command log, every command with its actor. Humans and agents use the same commands; changes are shown by colour with a diff and undo. No real-time co-editing. Agents read human selections and edits through tools (`get_selection`, `get_changes`) because a panel can't push into an agent's chat.
 
-## 7. Where it shows
+## 8. Where it shows
 
 1. **A plain web page.** Works in the Claude Code desktop browser pane. Serve it with a 200 at `/` and bind both IPv4 and IPv6, because user reports describe hangs on redirects and on IPv6-only binds *(unverified)*.
 2. **A VS Code-family extension** with webview tabs in the editor area, beside the chat. Works in VS Code; Cursor and Codex layouts need probing, since reports say Cursor reserves its right sidebar for its own agent *(unverified)*.
@@ -115,7 +169,7 @@ Panels show beside the agent, not inside its chat.
 
 **Probe first (about 6 agent-hours plus your screen time):** preview pane with a hosted URL versus localhost; docking beside Claude Code, Codex and Cursor; SSE through the preview pane and a cloud proxy; WASM and blob workers under the webview security rules; MCP Apps in each client; publishing to both the VS Code Marketplace and Open VSX; a fallback if Codex has no usable panel.
 
-## 8. Staged build
+## 9. Staged build
 
 Rough: about 290 agent-hours, 4 to 6 weeks with 3 to 4 agents in parallel, if usage limits allow. Week 1 starts when the founder confirms.
 
@@ -130,7 +184,7 @@ Rough: about 290 agent-hours, 4 to 6 weeks with 3 to 4 agents in parallel, if us
 
 **Contract conflicts to settle in stage 0:** one event format with the design hash in every envelope; one definition of the score, with errors and equivalent mutants counted separately; MuJoCo as recorded playback first.
 
-## 9. Proof test and gates
+## 10. Proof test and gates
 
 The viewer is the demo. The proof test decides whether the idea is worth anything, and runs in parallel.
 
@@ -149,7 +203,7 @@ The viewer is the demo. The proof test decides whether the idea is worth anythin
 
 If B passes and C fails: pivot to audit reports, or integrate into other tools. If B fails: stop. The benchmark, the open-source engine and a written negative result remain.
 
-## 10. Building with subagents
+## 11. Building with subagents
 
 - **Wave 0:** I (the coordinator) write the contracts, the folder layout, a fixture board and a golden test.
 - **Waves of 3 to 4 agents,** each in its own git worktree and branch, owning one folder. A separate reviewer agent never writes code; it reviews each merge against the contract and tries to break it.
@@ -159,17 +213,17 @@ If B passes and C fails: pivot to audit reports, or integrate into other tools. 
 
 Planned layout: `contracts/`, `viewer/`, `server/`, `workers/`, `extension/`, `mcp/`, `relay/`, `examples/`, `tests/`.
 
-## 11. Later directions
+## 12. Later directions
 
 - **3D printers.** Enclosure fit and print-tolerance checks first. Sending jobs to printers (OctoPrint, Moonraker) only through a local bridge, and a human presses start. The cloud never reaches the printer directly.
-- **Whole machines.** A machine model with subsystems, interfaces and requirements (power budget, torque against load, heat, mass, fit). Stages: a board, then a board with its enclosure, a subsystem such as driver, motor and load, then a simple machine such as a small robot arm or rover. Avoid flight and heavy loads early.
+- **Whole machines.** See section 6: parts, interfaces, subsystems, then machines. The first demo is a joint actuator.
 - **Multi-model IDE.** Models behind one interface, so one vendor's model can build and another's can attack. Bring your own keys, or local models for privacy. A standalone IDE only if the extension can't do the job.
 
-## 12. Who might pay (unknown)
+## 13. Who might pay (unknown)
 
 No willingness-to-pay data exists yet. Candidates, roughly by how soon money might come: robotics, hardware and IoT startups using AI to design boards; teams in larger companies adopting AI design tools and needing evidence; AI design vendors and EDA companies (as licensees or acquirers); paid audit reports. The open-source core is free. Paid layers would be hosted slow-tier compute, private deployments, evidence reports, integrations, and shared memory. Expect pilots and audits before subscriptions.
 
-## 13. Risks
+## 14. Risks
 
 - The score may not save review time. The proof test decides.
 - Frontier labs, Diode, Flux, Quilter, Siemens or Cadence may ship the same. Anthropic named simulation as a next step after its hardware work with Diode.
@@ -181,7 +235,7 @@ No willingness-to-pay data exists yet. Candidates, roughly by how soon money mig
 - Liability for any claim near safety. Needs a lawyer before launch.
 - One person is doing a team's work. Hours per week and a hardware co-founder or advisor change the odds more than anything else.
 
-## 14. Open decisions
+## 15. Open decisions
 
 1. Hours per week the founder can give, and whether other projects stay fully paused.
 2. Who finds 6 to 8 hardware engineers and seeds bugs blind.
