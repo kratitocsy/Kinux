@@ -20,6 +20,10 @@ A workspace where AI agents and engineers design hardware and machines together,
 
 The long-term form is an IDE (the concept image). We start with a viewer and an extension inside editors people already use.
 
+**Who it is for.** First audience: robotics and physical-AI engineers who design their own actuators, boards and enclosures with coding agents. Second: small hardware startups and hardware designers. Makers, students and researchers use the free open-source version. Proposed wording: "A workspace for physical AI engineers and hardware designers." A message for everyone reads as a message for no one, so the first users are named.
+
+Step-by-step lists for each stage are in [STEPS.md](STEPS.md).
+
 ## 2. Principles
 
 - Every panel labels its data **recorded**, **synthetic** or **real**.
@@ -286,6 +290,19 @@ Planned layout: `contracts/`, `viewer/`, `server/`, `workers/`, `extension/`, `m
 ## 13. Who might pay (unknown)
 
 No willingness-to-pay data exists yet. Candidates, roughly by how soon money might come: robotics, hardware and IoT startups using AI to design boards; teams in larger companies adopting AI design tools and needing evidence; AI design vendors and EDA companies (as licensees or acquirers); paid audit reports. The open-source core is free. Paid layers would be hosted slow-tier compute, private deployments, evidence reports, integrations, and shared memory. Expect pilots and audits before subscriptions.
+
+**Pricing hypotheses (untested; set real prices from what pilots say they would pay).**
+
+| Plan | Who | Idea |
+|---|---|---|
+| Free | Everyone | Open-source core, self-hosted, a small hosted quota, public projects |
+| Personal, about $20 a month | Individuals and makers | Private projects, hosted viewer and history, a monthly compute allowance. Comparable to common AI coding tool prices, to be checked |
+| Pro or Team, per seat, higher | Companies | Shared parts library, team review, more compute, priority runs, evidence reports |
+| Enterprise, custom | Larger companies | Private or self-hosted deployment, audit reports, SSO, support |
+
+Agents run on the user's own Claude, Codex or Cursor plan through MCP, so Kinux does not pay for model usage unless it adds its own models later. Compute for the slow tier is the real cost: a heavy airflow or FEA sweep can cost a couple of euros per pull request on my rough estimates, so plans carry a compute allowance with paid top-ups. Cap the free tier tightly. Students and educators free or discounted; regional pricing for markets where buyers pay much less. Track real cost per run from the first release.
+
+**Monetization beyond subscriptions.** Not banner ads: engineers dislike them, ad income per user in a small audience is low, and an ad inside a verification tool invites doubts about the results. Native options once the registry exists (phase L): referral links when a verified part is bought, quotes and orders for boards, 3D prints and CNC parts, labelled sponsored listings in the parts library, and partner services. Rules: sponsorship never changes a score, verdict or quality ranking; sponsored items are labelled and kept apart from verified results; no tracking of design contents and no sharing of design data with sellers; no promotions around safety-critical choices.
 
 ## 14. Risks
 
