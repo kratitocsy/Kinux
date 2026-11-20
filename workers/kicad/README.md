@@ -180,3 +180,19 @@ to the KiCad major version actually running.
 - Library resolution and symbol/footprint cross-checking are not ported.
 - A SPICE netlist is not produced here; this module supplies the graph and the
   spans it would be built from.
+
+## Checked against real designs
+
+Run over all 19 `.kicad_sch` files in Copperhead's repository — ten real
+projects under `manual-tests/real-designs/` (KiCad's own demos, including
+`complex_hierarchy`, `multichannel`, `pic_programmer` and `ecc83`, up to 165
+components), four reference boards, and their test fixtures.
+
+**No crashes.** Components and spans were extracted from every file.
+Connectivity derived for 10 and was refused for 9, which is the intended
+behaviour rather than a shortfall: a refusal names its blockers and returns no
+nets, instead of guessing.
+
+This is a robustness check, not a correctness check. Nothing here verifies the
+derived nets against what KiCad itself computes; `kicad-cli sch export netlist`
+remains the authority, and every derived result says so in its caveats.

@@ -27,7 +27,8 @@ built with a bundler, Kinux is dependency-free ESM, and Kinux's verdict rules
 | Kinux file | Derived from | What changed |
 |---|---|---|
 | `workers/ngspice/assertions.mjs` | `src/kicad/spice.ts` | Ported to ESM; wired to Kinux's ngspice runner, which upstream does not have; verdicts mapped to the Kinux contract |
-| `workers/kicad/sexp.mjs` | `src/kicad/sexp.ts` | Ported to ESM; extended for the design-graph needs of the mutation engine |
+| `workers/kicad/sexp.mjs` | `src/kicad/sexp.ts`, `src/kicad/spans.ts` | Ported to ESM; rewritten as a single pass so every list and atom carries a source span, which the original does not track; `listEnd`/`childSpans` ported near-verbatim from `spans.ts` |
+| `workers/kicad/fixtures/open-key.kicad_sch` | `test/fixtures/open-key/hardware/open-key.kicad_sch` | Copied verbatim, unmodified |
 | `workers/kicad/schematic.mjs` | `src/kicad/sexp.ts`, `symlib.ts` (format reading only) | Our own module. Its rules for reading the `.kicad_sch` format — which `(symbol …)` is a real component, power-symbol recognition, pin mapping, the two spellings of `Sheetfile` — follow their reading; spans, hierarchy walk and the not-derivable result are ours |
 | `workers/pcb/erc-drc-report.mjs` | `src/kicad/report.ts` | Ported to ESM; results mapped to Kinux verdicts, with the KiCad version gate Kinux needs |
 | `workers/pcb/fixtures/reports/erc-clean.json`, `erc-unconnected-pin.json`, `drc-clean.json` | `test/fixtures/reports/` | Copied verbatim, unmodified. Real `kicad-cli` output, self-reporting `kicad_version` 10.0.4 |
@@ -36,7 +37,7 @@ Kinux's own licence is not yet decided. Note that Apache-2.0 code can be
 combined with MIT, BSD, Apache-2.0 and GPLv3, but **not** GPLv2. Taking this
 code therefore rules out a GPLv2 Kinux.
 
-The three fixtures above are the only files taken byte-for-byte; everything
+The report fixtures above and `open-key.kicad_sch` are the only files taken byte-for-byte; everything
 else listed was rewritten. Other fixtures under `workers/pcb/fixtures/reports/`
 are our own hand-authored files, not upstream material, and their README says
 which is which.
