@@ -1,0 +1,90 @@
+(kicad_sch
+	(version 20231120)
+	(generator "kinux_fixture")
+	(uuid "0a0a0a0a-0000-4000-8000-00000000odd1")
+	(paper "A4")
+	(title_block
+		(title "odd nodes: things a reader must not choke on")
+		(date "2026-11-20")
+		(rev "A")
+	)
+	(lib_symbols
+		(symbol "Device:R"
+			(property "Reference" "R" (at 0 0 90) (effects (font (size 1.27 1.27))))
+			(property "Value" "R" (at 0 0 90) (effects (font (size 1.27 1.27))))
+			(symbol "R_0_1"
+				(rectangle (start -1.016 -2.54) (end 1.016 2.54)
+					(stroke (width 0.254) (type default))
+					(fill (type none))
+				)
+			)
+			(symbol "R_1_1"
+				(pin passive line (at 0 3.81 270) (length 1.27)
+					(name "~" (effects (font (size 1.27 1.27))))
+					(number "1" (effects (font (size 1.27 1.27))))
+				)
+				(pin passive line (at 0 -3.81 90) (length 1.27)
+					(name "~" (effects (font (size 1.27 1.27))))
+					(number "2" (effects (font (size 1.27 1.27))))
+				)
+			)
+		)
+	)
+	(a_node_type_kinux_has_never_heard_of
+		(with_nested (children (that (go (quite (deep (indeed "bottom"))))))) 
+		(and_a_bare_atom yes)
+	)
+	(table
+		(cells
+			(cell "a")
+			(cell "b")
+		)
+	)
+	(embedded_fonts no)
+	(text "multi\nline\ttext with a quote \" and a backslash \\ and 10 kΩ"
+		(at 30 26 0)
+		(effects (font (size 2 2)))
+		(uuid "0f0f0f0f-0000-4000-8000-00000000t001")
+	)
+	(text_box "a text box, new in KiCad 7"
+		(at 30 40 0)
+		(size 40 10)
+		(uuid "0f0f0f0f-0000-4000-8000-00000000b001")
+	)
+	(rule_area
+		(polyline
+			(pts (xy 10 10) (xy 20 10) (xy 20 20))
+		)
+	)
+	(symbol
+		(lib_id "Device:R")
+		(at 50.8 101.6 0)
+		(unit 1)
+		(dnp no)
+		(uuid "0d0d0d0d-0000-4000-8000-00000000s001")
+		(property "Reference" "R1" (at 53.34 100.965 0) (effects (font (size 1.27 1.27))))
+		(property "Value" "4k7" (at 53.34 103.505 0) (effects (font (size 1.27 1.27))))
+		(property "Footprint" "Resistor_SMD:R_0603_1608Metric" (at 49.022 101.6 90) (effects (font (size 1.27 1.27)) hide))
+		(property "A Custom Field" "a value with \"quotes\" in it" (at 50.8 101.6 0) (effects (font (size 1.27 1.27)) hide))
+		(pin "1" (uuid "0e0e0e0e-0000-4000-8000-00000000p001"))
+		(pin "2" (uuid "0e0e0e0e-0000-4000-8000-00000000p002"))
+		(instances
+			(project "odd-nodes"
+				(path "/0a0a0a0a-0000-4000-8000-00000000odd1"
+					(reference "R1") (unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "NotInThisFile:MysteryPart")
+		(at 80 101.6 0)
+		(unit 1)
+		(uuid "0d0d0d0d-0000-4000-8000-00000000s002")
+		(property "Reference" "U9" (at 80 95 0) (effects (font (size 1.27 1.27))))
+		(property "Value" "MYSTERY" (at 80 108 0) (effects (font (size 1.27 1.27))))
+	)
+	(sheet_instances
+		(path "/" (page "1"))
+	)
+)
