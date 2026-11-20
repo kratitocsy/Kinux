@@ -1,0 +1,37 @@
+# Third-party notices
+
+Kinux contains code derived from other open-source projects. This file records
+what, from where, and under which licence, as those licences require.
+
+## Copperhead
+
+- **Project:** copperhead — <https://github.com/copperheadhq/copperhead>
+- **Copyright:** Copyright 2026 Chouhan Industries
+- **Licence:** Apache License 2.0 — full text in [`licenses/copperhead-Apache-2.0.txt`](licenses/copperhead-Apache-2.0.txt)
+- **Upstream NOTICE**, reproduced as Apache-2.0 section 4(d) requires:
+
+  ```
+  copperhead
+  Copyright 2026 Chouhan Industries
+
+  This product includes software developed at Chouhan Industries
+  (https://github.com/copperheadhq/copperhead).
+  ```
+
+Apache-2.0 section 4(b) requires derived files to carry prominent notice that
+they were changed. Each file below states its origin and its modifications in
+its own header, and every one of them was changed: Copperhead is TypeScript
+built with a bundler, Kinux is dependency-free ESM, and Kinux's verdict rules
+(`NOT_CHECKED` and `ERROR` are never a pass) are not part of the originals.
+
+| Kinux file | Derived from | What changed |
+|---|---|---|
+| `workers/ngspice/assertions.mjs` | `src/kicad/spice.ts` | Ported to ESM; wired to Kinux's ngspice runner, which upstream does not have; verdicts mapped to the Kinux contract |
+| `workers/kicad/sexp.mjs` | `src/kicad/sexp.ts` | Ported to ESM; extended for the design-graph needs of the mutation engine |
+| `workers/pcb/erc-drc-report.mjs` | `src/kicad/report.ts` | Ported to ESM; results mapped to Kinux verdicts, with the KiCad version gate Kinux needs |
+
+Kinux's own licence is not yet decided. Note that Apache-2.0 code can be
+combined with MIT, BSD, Apache-2.0 and GPLv3, but **not** GPLv2. Taking this
+code therefore rules out a GPLv2 Kinux.
+
+No Copperhead trademark is used, and nothing here implies endorsement.
