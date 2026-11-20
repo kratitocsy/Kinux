@@ -1,0 +1,30 @@
+{
+    "$schema": "https://schemas.kicad.org/drc.v1.json",
+    "coordinate_units": "mm",
+    "date": "2026-11-20T00:00:00",
+    "kicad_version": "8.0.0",
+    "source": "usb-c.kicad_pcb",
+    "included_severities": ["error", "warning"],
+    "schematic_parity": [],
+    "unconnected_items": [],
+    "violations": [
+        {
+            "description": "Hole clearance violation (netclass 'Default' clearance 0.250 mm; actual 0.180 mm)",
+            "items": [
+                { "description": "Pad A1 [GND] of J1 on F.Cu", "pos": { "x": 30.0, "y": 10.0 }, "uuid": "2b000000-0000-4000-8000-000000000001" },
+                { "description": "NPTH pad of J1", "pos": { "x": 30.2, "y": 10.0 }, "uuid": "2b000000-0000-4000-8000-000000000002" }
+            ],
+            "severity": "error",
+            "type": "hole_clearance"
+        },
+        {
+            "description": "Clearance violation (netclass 'Default' clearance 0.200 mm; actual 0.150 mm)",
+            "items": [
+                { "description": "Pad B6 [DP] of J1 on F.Cu", "pos": { "x": 31.0, "y": 11.0 }, "uuid": "2b000000-0000-4000-8000-000000000003" },
+                { "description": "Pad B7 [DM] of J1 on F.Cu", "pos": { "x": 31.2, "y": 11.0 }, "uuid": "2b000000-0000-4000-8000-000000000004" }
+            ],
+            "severity": "error",
+            "type": "clearance"
+        }
+    ]
+}

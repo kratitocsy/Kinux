@@ -1,0 +1,49 @@
+{
+    "$schema": "https://schemas.kicad.org/drc.v1.json",
+    "coordinate_units": "mm",
+    "date": "2026-11-20T00:00:00",
+    "kicad_version": "8.0.0",
+    "source": "broken.kicad_pcb",
+    "included_severities": ["error", "warning"],
+    "schematic_parity": [
+        {
+            "description": "Pad net doesn't match schematic",
+            "items": [
+                { "description": "Pad 2 [GND] of R1 on F.Cu", "pos": { "x": 10.0, "y": 20.0 }, "uuid": "3c000000-0000-4000-8000-000000000005" }
+            ],
+            "severity": "error",
+            "type": "pad_net_mismatch"
+        }
+    ],
+    "violations": [
+        {
+            "description": "Clearance violation (netclass 'Default' clearance 0.200 mm; actual 0.050 mm)",
+            "items": [
+                { "description": "Pad 1 [VBUS] of J1 on F.Cu", "pos": { "x": 12.0, "y": 14.0 }, "uuid": "3c000000-0000-4000-8000-000000000001" },
+                { "description": "Track [GND] on F.Cu, length 2.1 mm", "pos": { "x": 12.4, "y": 14.0 }, "uuid": "3c000000-0000-4000-8000-000000000002" }
+            ],
+            "severity": "error",
+            "type": "clearance"
+        },
+        {
+            "description": "Items shorting two nets",
+            "items": [
+                { "description": "Pad A4 [VBUS] of J1 on F.Cu", "pos": { "x": 4.0, "y": 8.0 }, "uuid": "3c000000-0000-4000-8000-000000000003" },
+                { "description": "Pad B9 [GND] of J1 on F.Cu", "pos": { "x": 4.0, "y": 8.0 }, "uuid": "3c000000-0000-4000-8000-000000000004" }
+            ],
+            "severity": "error",
+            "type": "shorting_items"
+        }
+    ],
+    "unconnected_items": [
+        {
+            "description": "Missing connection between items",
+            "items": [
+                { "description": "Pad 1 [VIN] of R1 on F.Cu", "pos": { "x": 10.0, "y": 12.0 }, "uuid": "3c000000-0000-4000-8000-000000000006" },
+                { "description": "Pad 2 [VIN] of C1 on F.Cu", "pos": { "x": 18.0, "y": 12.0 }, "uuid": "3c000000-0000-4000-8000-000000000007" }
+            ],
+            "severity": "error",
+            "type": "unconnected_items"
+        }
+    ]
+}
