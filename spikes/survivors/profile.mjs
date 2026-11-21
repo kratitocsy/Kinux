@@ -191,6 +191,8 @@ async function profileDesign(d, workdir) {
   };
 }
 
+// Only when run directly: profile-run.mjs imports compareRuns from this file.
+if (resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
 const outPath = process.argv[2];
 if (!outPath) { console.error('usage: profile.mjs <out.json> [--fang-dir <dir>]'); process.exit(2); }
 const fi = process.argv.indexOf('--fang-dir');
@@ -210,4 +212,5 @@ try {
   }
 } finally {
   rmSync(workdir, { recursive: true, force: true });
+}
 }
