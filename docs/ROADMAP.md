@@ -129,6 +129,7 @@ R9 isolation  (before any third-party design runs anywhere that matters)
 
   Their installer also deals with macOS, where `kicad-cli` lives inside `KiCad.app` and is not on `PATH`: it searches the standard install folders and offers an environment-variable override. We should do both (K22). By their own comment, Ubuntu 26.04 ships KiCad 9, so a newer base image would also work without a PPA.
 - **Done when:** ERC and DRC run on a real board, and the five hand-authored fixtures are replaced or confirmed.
+- **Progress (2026-11-21):** KiCad 10.0.8 is installed by the environment's setup script (D2 settled for the development container), and ERC and DRC run on real boards. **Still open:** the five hand-authored report fixtures have not yet been compared against real KiCad 10 reports, and ERC/DRC are not yet wired into the engine as checks.
 
 ### R9. Isolate the solvers · L · Human
 - **Why:** netlists, `.inp` decks, `.geo` files and MuJoCo models can all execute code or read files, and today our sanitizers are the only barrier (K1; STATUS section 7, finding 2). Nothing third-party should run until solvers run in containers with no network, a read-only root and a size and time limit.
