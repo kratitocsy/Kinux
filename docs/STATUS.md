@@ -205,7 +205,7 @@ Numbered so they can be referred to. Items marked **gap** block a roadmap goal.
 | K7 | No CI. Nothing runs the tests on a push. | gap |
 | K8 | `corner()` in the assertion grammar is an absolute −3 dBV crossing, so it only means "filter corner" when passband gain is 0 dB. | bug |
 | K9 | `scope:` in a `## Simulation` block is parsed but not enforced. | bug |
-| K10 | `3.3F` reads as 3.3 femto, not farads (SPICE suffix ambiguity, inherited). | quirk |
+| K10 | `3.3F` reads as 3.3 femto in `workers/ngspice/assertions.mjs` (which matches ngspice), but as 3.3 with the unit "F" in `engine/netlist.mjs`. The two number parsers disagree. Both read `M` as milli and `meg` as mega, correctly. | quirk |
 | K11 | One queue test ("timeouts") failed once under full-suite load and passed 15 of 15 times in isolation. It uses a 200 ms process-kill timeout. | flaky |
 | K12 | `node:sqlite` needs a recent Node 22 and prints an ExperimentalWarning. `package.json` had said Node 20 would do; that was wrong. | fixed in this change |
 | K13 | The IPv6 listener has never run: the container has no IPv6 stack. The test skips visibly. | unverified |
@@ -250,6 +250,21 @@ Where the numbers above came from. Reproduce what you can with `spikes/env/probe
 Taking Apache-2.0 code rules out a GPLv2 licence for Kinux. Our own licence is undecided.
 
 Copperhead builds designs; Kinux checks them. We deliberately did not take its design-generation code. It has no mutation testing, no physics beyond connectivity, no mechanical or motion checks, and no part or machine model.
+
+### Worth reading in Copperhead's other branches
+
+Copperhead's repository has 83 branches. **None is named "research"**: they are `feat/`, `fix/`, `docs/`, `chore/` and `propose/` (written specs). These are the ones relevant to us. I read their READMEs, proposals and commit messages; I did not run any of it, and several are behind `main`, so a diff against `main` is noisy.
+
+| Branch | What it is | Why it matters to us |
+|---|---|---|
+| `feat/intake-extraction-core` (212 files not on `main`) | **Datasheet intake**: turns a datasheet into typed, source-cited, confidence-scored facts, then gives APPROVE, REFUSE or HOLD with the exact datasheet line and rule line cited. The verdict engine is a pure function: no network, no clock, no model. A value whose quoted text is not found in the datasheet is held, never trusted. | The same principles as ours, applied to a gap we have: our thermal model records `datasheet:` as a bare string. This is how to make that provenance checkable (R15, R19). It is a separate workspace and needs external API keys. |
+| `fix/320-fabricated-tool-results` | A model that carries on past its tool calls in the harness's own transcript format, inventing `[result of <tool>]` lines. Everything from that line on is treated as fabricated and discarded, and a `fabricated-results` event is logged. | Agents can invent tool results. When the MCP server and Villain loop exist (R14, R16), verdicts must come only from real solver output. |
+| `feat/kicad-ipc-bridge`, `add-kicad-side-panel` | Reads the selection and open documents from a running KiCad through its IPC API (KiCad 9 or later), and a panel inside KiCad. | A different surface for R26, and a parallel to our own `get_selection` tool. Needs KiCad 9+. |
+| `add-circuit-json-export`, `circuit-json-corpus-run` | Export to tscircuit's `circuit-json` format, with SVG renders of 10 real designs. | A possible route to a 2D schematic panel. But their exporter works from their own drafting model, and lifting circuit-json from an arbitrary `.kicad_sch` is explicitly out of their scope. |
+| `docs/cloud-console` | Their hosted product: a GitHub App, a fresh container per run, no model in the check, tenant isolation enforced in the database, and a rule that design files are never stored. | A worked example for Phase L (registry and badges) and for hosting decisions (D6). |
+| `fix/355-erc-exclusions` | ERC exclusions declared as named entries with a reason, instead of KiCad's own markers, which are keyed by position and change every re-draft. Every excluded finding is printed with its reason. | The pattern for R5: a "reported, never a failure" class should name what it excuses and why. |
+| `fix/drift-si-mega-vs-milli` | Fixed `1m` and `1M` comparing equal, nine orders of magnitude apart. | We checked: our parsers are right, but the KiCad hand-off needs a test (R3). |
+| `remove-synap-memory` | Removed a cross-run memory integration: "in-repo docs and constraints stay the agent's only memory". | Prior art for the plan's phase G memory, where an external memory service was tried and dropped. The reason is in their issue #167, which I did not read. |
 
 ## 11. Decisions made, and why
 
