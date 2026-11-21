@@ -57,7 +57,53 @@ site serves a bot challenge). A 20 ms simulation takes 3.5 to 10 minutes
 
 ## quiet-orbit
 
-Pending. Models are being sourced.
+**Bench.** Diotec's 1N4148W model for D1 (official, but from a different maker
+than the BOM's Diodes Inc part, whose site serves a bot challenge), Würth's own
+PSpice model for the four amber LEDs (exact part number), the polyfuse as its
+datasheet R1max of 6 ohm (does not trip), and the ATtiny84A, which has no
+model, left out and stood in for by a labelled constant 10 mA load from VCC to
+GND (the BOM's reserved budget). psa mode. Checks: the agent-proposed suites,
+unedited (all DC).
+
+**Checkable fraction:** 16 of 17 electrical parts (94.1%). The MCU, which
+decides everything dynamic on this board, is the one left out.
+
+**Baseline:** all 20 checks pass. LED currents 2.63, 2.97 and 3.31 mA at VBUS
+4.75, 5.00 and 5.25 V. Measured design-review finding beside it: the model's
+D1 drops 0.913 V at 20 mA, so the BOM's own limit (at most 0.8 V near 20 mA)
+is not met, and the Diodes datasheet's own maximum at 10 mA is already
+0.855 V: the BOM figure is not backed by any datasheet.
+
+| Suite | Mutants | Score | 95% interval | Wall time (2 jobs, cores shared with the 555 run) |
+|---|---|---|---|---|
+| thorough | 69 (65 checkable) | **44.6%** (29 killed) | 33.2% to 56.7% | 30 s |
+| weak | 69 (63 checkable) | **6.3%** (4 killed) | 2.5% to 15.2% | 24 s |
+
+The intervals do not overlap: on a real board, the weak suite scores lower
+than the thorough one, as on the hand-written circuits.
+
+**Cap.** The thorough score is capped at 40% (`run_error`) because one mutant
+ended in ERROR: removing R7 leaves its LED and nets as an island, ngspice's
+DC solve fails gmin and source stepping, and its "transient op" fallback then
+runs past 300 s. That is deterministic, not a machine fault (STATUS K30). The
+uncapped score is 44.6%; the capped headline is 40.0%, and both are reported.
+
+**Equivalent fraction (strict).** 36 survivors. Under the suite's own DC
+analyses 15 are identical, all capacitor mutants: a DC suite cannot see a
+capacitor. Under a power-up transient (`--behaviour "tran 1u 2m uic"`), 12 of
+those differ, by up to 100% in charging current, so they are coverage gaps,
+not equivalents. **3 of 36 (8.3%) are solver-identical** in every analysis:
+each swaps a capacitor's two terminals, and a capacitor has no polarity. The
+other 33 are measured differences awaiting a person's judgement
+(`gate-a/bench/qo/judging-sheet.md`); 8.3% is a floor.
+
+**Wall time:** 30 s against the 10-minute limit. **Within the limit.**
+
+**What the survivors say about the checks.** Removing an LED's resistor
+survives: the check `I(R4) between 2m and 5m` measures the current through R4,
+so once R4 is gone it has nothing to measure and is NOT_CHECKED, and nothing
+else notices the LED going dark. A probe on a part is blind to that part's own
+removal; a check on the LED's anode would catch it (STATUS finding 17).
 
 ## Against the pass condition
 
