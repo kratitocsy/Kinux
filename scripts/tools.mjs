@@ -35,6 +35,7 @@ export const SUITES = {
   'spice-number': ['ngspice'],
   'reason-codes': [],
   'singular-matrix': ['ngspice'],
+  'ngspice-frequency': ['ngspice'],
   'examples': ['ngspice'],
   'thermal': ['ngspice'],
   'live': ['ngspice'],

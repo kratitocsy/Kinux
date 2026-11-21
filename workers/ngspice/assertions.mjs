@@ -12,6 +12,7 @@
 // mapping from ngspice's measurements back to Kinux verdicts.
 //
 //   measurables   V(<net>)  I(<refdes>)  corner(<net>)
+//                 f(<net>) crossing <volts> [after <seconds>]   (tran only; Kinux addition)
 //   point         optional `at <number>` (a sweep/time point)
 //   comparators   between <a> and <b>   < <x>   > <x>
 //   analyses      op | dc | ac | tran, each with its own sweep parameters
@@ -53,7 +54,7 @@ import { evaluateCheck } from './verdict.mjs';
  *
  * @typedef {{raw: string, value: number, unit: string}} SpiceNumber
  *
- * @typedef {{kind: 'voltage'|'current'|'corner', target: string}} SpiceMeasurable
+ * @typedef {{kind: 'voltage'|'current'|'corner'|'frequency', target: string}} SpiceMeasurable
  *
  * @typedef {{kind: 'between', lower: SpiceNumber, upper: SpiceNumber}
  *          |{kind: 'less-than', bound: SpiceNumber}
@@ -101,6 +102,8 @@ const SAFE_MEASURE_NAME = /^[a-z_][a-z0-9_]*$/;
  *  otherwise put a dot directive on the control line we build. */
 const SAFE_PARAM_TOKEN = /^[A-Za-z0-9_+-][A-Za-z0-9_.+-]*$/;
 const MAX_PARAM_TOKENS = 8;
+/** f() times this many full periods between rising crossings. */
+const FREQUENCY_PERIODS = 3;
 
 const SI_MULTIPLIERS = Object.freeze({
   '': 1,
@@ -120,6 +123,7 @@ const UNITS_FOR = {
   voltage: new Set(['', 'v', 'volt', 'volts']),
   current: new Set(['', 'a', 'amp', 'amps', 'ampere', 'amperes']),
   corner: new Set(['', 'hz', 'hertz']),
+  frequency: new Set(['', 'hz', 'hertz']),
 };
 
 /* -------------------------------------------------------------------------- */
@@ -165,7 +169,7 @@ export function parseSpiceNumber(raw, line = 1) {
  */
 export function parseSpiceAssertion(raw, line = 1) {
   const text = String(raw ?? '').trim();
-  const measurableMatch = /^(V|I|corner)\(([^()\s]+)\)\s+(.+)$/i.exec(text);
+  const measurableMatch = /^(V|I|corner|f)\(([^()\s]+)\)\s+(.+)$/i.exec(text);
   if (!measurableMatch) {
     throw new SimulationParseError(line, `invalid SPICE assertion "${raw}"`, 'invalid_assertion');
   }
@@ -180,17 +184,43 @@ export function parseSpiceAssertion(raw, line = 1) {
   }
 
   const token = measurableMatch[1].toLowerCase();
-  const kind = token === 'v' ? 'voltage' : token === 'i' ? 'current' : 'corner';
+  const kind = token === 'v' ? 'voltage' : token === 'i' ? 'current' : token === 'f' ? 'frequency' : 'corner';
   /** @type {SpiceMeasurable} */
   const measurable = { kind, target };
 
   let rest = measurableMatch[3].trim();
 
+  // f() takes a threshold and an optional start time instead of a point.
+  let crossing = null;
+  let after = null;
+  if (kind === 'frequency') {
+    const cm = /^crossing\s+(\S+)\s+(.+)$/i.exec(rest);
+    if (!cm) {
+      throw new SimulationParseError(line, 'f() needs "crossing <volts>", e.g. f(OUT) crossing 2.5 between 9k and 11k', 'invalid_assertion');
+    }
+    crossing = parseSpiceNumber(cm[1], line);
+    if (!UNITS_FOR.voltage.has(crossing.unit.toLowerCase())) {
+      throw new SimulationParseError(line, `crossing level "${cm[1]}" must be a voltage`, 'unit_not_for_measurable');
+    }
+    rest = cm[2].trim();
+    const am = /^after\s+(\S+)\s+(.+)$/i.exec(rest);
+    if (am) {
+      after = parseSpiceNumber(am[1], line);
+      if (!['', 's', 'sec'].includes(after.unit.toLowerCase()) || !(after.value >= 0)) {
+        throw new SimulationParseError(line, `after "${am[1]}" must be a time in seconds`, 'unit_not_for_measurable');
+      }
+      rest = am[2].trim();
+    }
+    if (/^at\s/i.test(rest)) {
+      throw new SimulationParseError(line, 'f() takes "after <time>", not an "at" point', 'at_not_supported');
+    }
+  }
+
   // Optional measurement point. Kinux addition: without it a transient
   // assertion can only be an average over the whole window, which is almost
   // never the thing anyone means to assert.
   let at = null;
-  const atMatch = /^at\s+(\S+)\s+(.+)$/i.exec(rest);
+  const atMatch = kind === 'frequency' ? null : /^at\s+(\S+)\s+(.+)$/i.exec(rest);
   if (atMatch) {
     at = parseSpiceNumber(atMatch[1], line);
     rest = atMatch[2].trim();
@@ -229,14 +259,16 @@ export function parseSpiceAssertion(raw, line = 1) {
     if (!allowed.has(n.unit.toLowerCase())) {
       throw new SimulationParseError(
         line,
-        `unit "${n.unit}" does not belong to ${kind === 'corner' ? 'corner()' : kind} ` +
+        `unit "${n.unit}" does not belong to ${kind === 'corner' ? 'corner()' : kind === 'frequency' ? 'f()' : kind} ` +
           `(expected one of: ${[...allowed].filter(Boolean).join(', ')}, or none)`,
         'unit_not_for_measurable',
       );
     }
   }
 
-  return { raw: text, line, measurable, comparator, at };
+  const out = { raw: text, line, measurable, comparator, at };
+  if (kind === 'frequency') Object.assign(out, { crossing, after });
+  return out;
 }
 
 /** @param {SpiceComparator} c @returns {SpiceNumber[]} */
@@ -596,7 +628,32 @@ export function compileSpiceAssertion(assertion, analysis, name = `assertion_${a
   const saves = [];
   let expression;
 
-  if (measurable.kind === 'corner') {
+  let frequency = null;
+  if (measurable.kind === 'frequency') {
+    if (a.kind !== 'tran') {
+      throw new SimulationParseError(assertion.line, 'f() requires a tran analysis', 'frequency_requires_tran');
+    }
+    const tstop = a.params?.[1] === undefined ? NaN : parseSpiceNumber(a.params[1], assertion.line).value;
+    if (!(tstop > 0)) {
+      throw new SimulationParseError(assertion.line, 'f() needs a tran stop time ("tran <step> <stop>")', 'frequency_requires_tran');
+    }
+    const td = assertion.after ? assertion.after.value : tstop / 2;
+    if (!(td < tstop)) {
+      throw new SimulationParseError(assertion.line, `f(): after (${td} s) is not inside the tran window (stop ${tstop} s)`, 'invalid_analysis_params');
+    }
+    const v = `v(${measurable.target})`;
+    const thr = literal(assertion.crossing.value);
+    const tdl = literal(td);
+    expression = v;
+    lines.push(
+      `meas tran ${name}_per TRIG ${v} VAL=${thr} RISE=1 TD=${tdl} TARG ${v} VAL=${thr} RISE=${FREQUENCY_PERIODS + 1} TD=${tdl}`,
+      `meas tran ${name}_max MAX ${v} FROM=${tdl} TO=${literal(tstop)}`,
+      `meas tran ${name}_min MIN ${v} FROM=${tdl} TO=${literal(tstop)}`,
+      `let ${name} = ${FREQUENCY_PERIODS}/${name}_per`,
+      `print ${name}`,
+    );
+    frequency = { threshold: assertion.crossing.value, max: `${name}_max`, min: `${name}_min`, after: td, stop: tstop };
+  } else if (measurable.kind === 'corner') {
     if (a.kind !== 'ac') {
       throw new SimulationParseError(
         assertion.line,
@@ -651,6 +708,7 @@ export function compileSpiceAssertion(assertion, analysis, name = `assertion_${a
     check.min = c.bound.value;
   }
   if (units) check.units = units;
+  if (frequency) check.frequency = frequency;
 
   return { name, lines, saves, check, expression };
 }
@@ -865,6 +923,28 @@ export function evaluateAssertion(run, check, ids) {
     max: check.max,
     units: check.units,
   });
+
+  if (base.verdict !== 'PASS' && base.verdict !== 'FAIL' && check.frequency) {
+    // f(): the period could not be timed. If the run itself was fine and the
+    // window's max and min show the signal never reached the threshold, its
+    // frequency there is 0 Hz: a measurement, and a dead oscillator can fail.
+    // Anything else (no such net, a failed run, too few periods to time) stays
+    // NOT_CHECKED.
+    const fq = check.frequency;
+    const mx = run?.ok ? run.measurements?.[fq.max]?.value : undefined;
+    const mn = run?.ok ? run.measurements?.[fq.min]?.value : undefined;
+    if (Number.isFinite(mx) && Number.isFinite(mn)) {
+      if (mx < fq.threshold || mn > fq.threshold) {
+        const pass = satisfies(0, assertion.comparator);
+        const out = { test_id, subject, verdict: pass ? 'PASS' : 'FAIL', measured: 0,
+          limit: describeComparator(assertion.comparator), assertion: assertion.raw };
+        if (check.units) out.units = check.units;
+        return out;
+      }
+      return { ...base, verdict: 'NOT_CHECKED', reason_code: 'out_of_scope', assertion: assertion.raw,
+        reason: `f(${assertion.measurable.target}) crosses ${fq.threshold} V but fewer than ${FREQUENCY_PERIODS} full periods fit between ${fq.after} s and ${fq.stop} s; lengthen the tran or move "after"` };
+    }
+  }
 
   if (base.verdict !== 'PASS' && base.verdict !== 'FAIL') {
     const out = { ...base, assertion: assertion.raw };

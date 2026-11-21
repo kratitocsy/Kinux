@@ -9,7 +9,7 @@
 // spikes/coverage/README.md, with the cases where it is wrong).
 //
 // WHAT "TOUCH" MEANS. A check reads from the design in exactly one way: an
-// assertion names a measurable. V(net) and corner(net) read a node voltage.
+// assertion names a measurable. V(net), corner(net) and f(net) read a node voltage.
 // I(refdes), P(refdes) and T(refdes) read the current through, power in, and
 // temperature of a part. Only those parsed assertions count. A name in a
 // netlist comment, a requirement, prose around a check, an HTML comment or a
@@ -397,7 +397,7 @@ export function analyseCoverage(netlist, suite, requirements = []) {
   const checks = [];
   for (const o of obs) {
     const r = { ...o, node: null, part: null, problem: null };
-    if (o.kind === 'voltage' || o.kind === 'corner') {
+    if (o.kind === 'voltage' || o.kind === 'corner' || o.kind === 'frequency') {
       const n = isGround(o.target) ? '0' : lc(o.target);
       if (n === '0') r.problem = 'measures ground, which is 0 V by definition; it can detect nothing';
       else if (!nodeNames.has(n)) r.problem = `net "${o.target}" is not in the design`;
