@@ -202,10 +202,14 @@ export async function runNetlist(netlist, opts = {}) {
     const tables = parsePrintTables(r.stdout);
     const normalized = normalizeOutput(r.stdout);
     const hardFail = Boolean(r.spawnError) || r.timedOut || r.code !== 0;
+    // ngspice 42 exits 0 after "Warning: singular matrix" and prints a solution that is wrong for the
+    // whole circuit (a 5 V source read back as 0 V, with one capacitor terminal opened). A solve the
+    // solver itself flagged is not a measurement, so it is a failed run, never a result (K26).
+    const singular = !hardFail && /singular matrix/i.test(`${r.stderr}\n${r.stdout}`);
     const files = keepDir ? await readdir(dir) : undefined;
 
     const result = {
-      ok: !hardFail,
+      ok: !hardFail && !singular,
       blocked: false,
       stage: 'run',
       exit_code: r.code,
@@ -227,7 +231,10 @@ export async function runNetlist(netlist, opts = {}) {
     };
     if (!result.ok) {
       result.reason_code = classifyFailure(r);
-      result.reason = (r.stderr.trim() || r.stdout.trim() || 'ngspice failed').split('\n').slice(0, 6).join('\n');
+      result.reason = singular
+        ? 'ngspice reported a singular matrix, so its solution is not trustworthy and was discarded'
+        : (r.stderr.trim() || r.stdout.trim() || 'ngspice failed').split('\n').slice(0, 6).join('\n');
+      if (singular) result.singular_matrix = true;
     }
     return result;
   } finally {
