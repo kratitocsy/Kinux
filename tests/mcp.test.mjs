@@ -14,7 +14,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -167,9 +167,12 @@ test('the server refuses to launch without a real design, and refuses unknown la
   }
 });
 
-test('the MCP server itself loads only Node built-ins and our own code: no model SDK, no MCP SDK', () => {
+test('the MCP server itself loads only Node built-ins, the schema validator and our own code: no model SDK, no MCP SDK', () => {
   const g = walkImports([SERVER], ROOT);
-  const external = [...g.external.keys()].filter(s => !s.startsWith('node:') && !builtinModules.includes(s));
+  // Ajv is the project's one sanctioned dependency (CONTRIBUTING rule 6); the reviewer role reaches it
+  // through the contract validator. Anything else, a model SDK or an MCP SDK above all, fails here.
+  const ALLOWED = new Set(['ajv/dist/2020.js', 'ajv-formats']);
+  const external = [...g.external.keys()].filter(s => !s.startsWith('node:') && !builtinModules.includes(s) && !ALLOWED.has(s));
   assert.deepEqual(external, []);
   assert.deepEqual(g.findings, []);
 });
@@ -196,4 +199,65 @@ test('launch flags for vendor models are checked: only psa, and jobs within 1..6
     try { execFileSync(process.execPath, [SERVER, '--design', DESIGN, '--checks', WEAK, ...extra], { stdio: ['ignore', 'ignore', 'pipe'], timeout: 10_000 }); } catch (e) { code = e.status; }
     assert.equal(code, 2, extra.join(' '));
   }
+});
+
+function startReviewer(extra = []) {
+  const dir = mkdtempSync(join(tmpdir(), 'kinux-mcp-rev-'));
+  const spec = join(dir, 'SPEC.md');
+  writeFileSync(spec, '# Spec\n\nThe divider output SHALL sit between 2.4 V and 2.6 V with a 5 V input.\n');
+  const FIXD = join(ROOT, 'engine', 'fixtures');
+  const child = spawn(process.execPath, [SERVER, '--role', 'reviewer', '--design', join(FIXD, 'divider.kicad_sch'),
+    '--sidecar', join(FIXD, 'divider.sidecar.json'), '--doc', spec, '--review-log', join(dir, 'review.jsonl'), ...extra], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const waiters = new Map();
+  let buf = '';
+  child.stdout.on('data', d => { buf += d; let i; while ((i = buf.indexOf('\n')) >= 0) { const m = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1); waiters.get(m.id)?.(m); } });
+  let next = 1;
+  const rpc = (method, params) => new Promise(res => { const id = next++; waiters.set(id, res); child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`); });
+  const call = async (name, args) => (await rpc('tools/call', { name, arguments: args })).result;
+  return { child, rpc, call, dir, stop: () => { child.stdin.end(); child.kill(); } };
+}
+
+test('the reviewer role lists only the review tools; neither role can call the other\'s', async () => {
+  const r = startReviewer();
+  try {
+    const init = await r.rpc('initialize', {});
+    assert.match(init.result.instructions, /PROPOSALS, never by prose/);
+    const names = (await r.rpc('tools/list', {})).result.tools.map(t => t.name).sort();
+    assert.deepEqual(names, ['kinux_get_review', 'kinux_propose', 'kinux_read_document', 'kinux_review_bundle']);
+    const run = await r.rpc('tools/call', { name: 'kinux_start_run', arguments: {} });
+    assert.ok(run.error, 'a reviewer cannot start runs');
+  } finally { r.stop(); }
+  const b = startServer();
+  try {
+    await initialised(b);
+    const p = await b.rpc('tools/call', { name: 'kinux_propose', arguments: { kind: 'question', text: 'x' } });
+    assert.ok(p.error, 'a builder cannot propose');
+  } finally { b.stop(); }
+});
+
+test('a review over MCP: proposals are verified or rejected at once, the report holds only what survived, the server logs it', async () => {
+  const r = startReviewer();
+  try {
+    await r.rpc('initialize', {});
+    const bundle = (await r.call('kinux_review_bundle', {})).structuredContent;
+    assert.match(bundle.bundle_hash, /^[0-9a-f]{64}$/);
+    const cite = (await r.call('kinux_propose', { kind: 'citation', domain: 'power', doc: 'SPEC.md', quote: 'between 2.4 V and 2.6 V with a 5 V input' })).structuredContent;
+    assert.equal(cite.status, 'verified');
+    const meas = (await r.call('kinux_propose', { kind: 'measurement', domain: 'power', probe: 'V(OUT)', analysis: 'op' })).structuredContent;
+    assert.equal(meas.status, 'verified');
+    assert.ok(Math.abs(meas.evidence.measured - 2.48511) < 1e-3);
+    const fake = (await r.call('kinux_propose', { kind: 'citation', domain: 'power', doc: 'SPEC.md', quote: 'output SHALL be exactly 3.3 V always' })).structuredContent;
+    assert.equal(fake.status, 'rejected');
+    const f = (await r.call('kinux_propose', { kind: 'finding', domain: 'power', severity: 'info', title: 'Divider output is inside its band', premises: [cite.id, meas.id] })).structuredContent;
+    assert.equal(f.status, 'verified');
+    const bad = await r.call('kinux_propose', { kind: 'measurement', probe: 'V(OUT)', sources: { 'OUT; shell': 1 } });
+    assert.equal(bad.isError, true, 'a source name outside the grammar is refused before any verifier runs');
+    const rev = (await r.call('kinux_get_review', {})).structuredContent;
+    assert.equal(rev.verified, 3);
+    assert.equal(rev.rejected, 1);
+    assert.match(rev.report, /Divider output is inside its band/);
+    assert.doesNotMatch(rev.report, /exactly 3\.3 V/);
+    const log = readFileSync(join(r.dir, 'review.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+    assert.deepEqual(log.map(e => e.status), ['verified', 'verified', 'rejected', 'verified']);
+  } finally { r.stop(); }
 });

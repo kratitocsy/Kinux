@@ -5,6 +5,14 @@
 //                       [--sidecar <json>] [--model-dir <dir>] [--thermal-model <json>]
 //                       [--intent <json>] [--ngspice-compat psa] [--jobs <n>] [--cache <file>]
 //                       [--runs-dir <dir>] [--call-log <file.jsonl>]
+//   node mcp/server.mjs --role reviewer --design <...> [--sidecar ...] --doc <SPEC.md> [--doc ...]
+//                       [--review-log <file.jsonl>]
+//
+// ROLE comes from the launch, never from a tool argument. The Builder role
+// (default) starts runs and reads findings. The Reviewer role reviews the
+// design by PROPOSALS (engine/review.mjs): citations, facts, measurements,
+// findings and questions, each accepted or rejected at once by a deterministic
+// verifier. A reviewer cannot start runs; a builder cannot propose.
 //
 // A coding agent (Claude Code, Codex, Cursor) starts runs and reads findings
 // through these seven tools. It never edits files through Kinux and never
@@ -49,6 +57,15 @@ export const VERDICT_CONTRACT = [
   'This is a pre-check linter, not a certification.',
 ].join('\n');
 
+export const REVIEW_CONTRACT = [
+  'You review a hardware design by PROPOSALS, never by prose. Every proposal is accepted or rejected at once by a deterministic verifier.',
+  'Quote documents exactly; a number you cannot cite or have ngspice measure does not survive. Check the datasheet or spec, not your memory.',
+  'A statement that something is absent needs the complete member list of the net, not a glance.',
+  'A finding must name verified premises: at least one citation (what is required) and at least one fact or measurement (what the design does).',
+  'Prefer a few fully grounded findings to many weak ones. When only a person, a measurement or a missing document can settle something, propose a question.',
+  'Measurements run on the simulated circuit, which holds the modelled parts only; parts left unmodelled cannot be measured.',
+].join('\n');
+
 const NO_ARGS = { type: 'object', properties: {}, additionalProperties: false };
 const RUN_ID = { type: 'string', pattern: '^r[0-9a-f]{8}$', description: 'a run id from kinux_start_run; default: the latest run' };
 const OPTIONAL_RUN = { type: 'object', properties: { run_id: RUN_ID }, additionalProperties: false };
@@ -64,6 +81,32 @@ export const TOOLS = [
   { name: 'kinux_open_viewer', description: 'Where to read a run: the report and event files. A live browser view is not wired in v0.', inputSchema: OPTIONAL_RUN },
 ];
 
+const STR = { type: 'string', maxLength: 2000 };
+export const REVIEW_TOOLS = [
+  { name: 'kinux_review_bundle', description: 'The closed review bundle: every part, every net with its full member list, the documents you may cite, the automatic sweep, and the bundle hash. Everything you reason over is here.', inputSchema: NO_ARGS },
+  { name: 'kinux_read_document', description: 'Read lines of a bundle document, numbered, so you can quote it exactly.',
+    inputSchema: { type: 'object', properties: { name: { type: 'string', maxLength: 200 }, from: { type: 'number', minimum: 1, maximum: 100000 }, to: { type: 'number', minimum: 1, maximum: 100000 } }, additionalProperties: false } },
+  { name: 'kinux_propose', description: [
+    'Submit ONE proposal; a deterministic verifier accepts or rejects it immediately, with the reason. Kinds:',
+    'citation {doc, quote}: a verbatim quote (at least 12 characters) from a bundle document.',
+    "fact {claim:'part_value', ref, value} | {claim:'connected', net, pins:['R4.1']} | {claim:'net_members', net, pins:[ALL members]}.",
+    "measurement {probe:'V(NET)' or 'I(PART)', analysis:'op' or 'tran <step> <stop> [uic]', sources:{NET: volts}, at?}: ngspice measures it; you never supply a value.",
+    'finding {title, severity: blocking|major|minor|info, premises:[ids], statement?}: accepted only if every premise is verified, with at least one citation and at least one fact or measurement.',
+    'question {text}: something only a person, a measurement or a missing document can settle.',
+    'Always set domain to your review domain.'].join(' '),
+    inputSchema: { type: 'object', additionalProperties: false, properties: {
+      kind: { type: 'string', enum: ['citation', 'fact', 'measurement', 'finding', 'question'] },
+      domain: { type: 'string', maxLength: 40 },
+      doc: { type: 'string', maxLength: 200 }, quote: STR,
+      claim: { type: 'string', enum: ['part_value', 'connected', 'net_members'] }, ref: { type: 'string', maxLength: 40 }, value: { type: 'string', maxLength: 80 },
+      net: { type: 'string', maxLength: 80 }, pins: { type: 'array', items: { type: 'string', maxLength: 40 }, maxItems: 200 },
+      probe: { type: 'string', maxLength: 80 }, analysis: { type: 'string', maxLength: 80 }, sources: { type: 'object', maxProperties: 12 }, at: { type: 'string', maxLength: 20 },
+      title: { type: 'string', maxLength: 200 }, severity: { type: 'string', enum: ['blocking', 'major', 'minor', 'info'] },
+      premises: { type: 'array', items: { type: 'string', maxLength: 10 }, maxItems: 30 }, statement: STR, text: STR,
+    } } },
+  { name: 'kinux_get_review', description: 'The review so far: counts, and the report rendered only from what the verifiers accepted.', inputSchema: NO_ARGS },
+];
+
 class ToolError extends Error {
   constructor(type, message, extra = {}) { super(message); this.type = type; this.extra = extra; }
 }
@@ -71,16 +114,23 @@ class ToolError extends Error {
 /** Parse launch arguments. Throws on anything missing or unknown. */
 export function parseLaunchArgs(argv) {
   const opts = {};
-  const known = new Set(['design', 'checks', 'sidecar', 'model-dir', 'thermal-model', 'runs-dir', 'intent', 'ngspice-compat', 'jobs', 'cache', 'call-log']);
-  const literal = new Set(['ngspice-compat', 'jobs']);
+  const known = new Set(['design', 'checks', 'sidecar', 'model-dir', 'thermal-model', 'runs-dir', 'intent', 'ngspice-compat', 'jobs', 'cache', 'call-log',
+    'role', 'doc', 'review-log']);
+  const literal = new Set(['ngspice-compat', 'jobs', 'role']);
   for (let i = 0; i < argv.length; i += 2) {
     const flag = argv[i];
     if (!flag?.startsWith('--') || !known.has(flag.slice(2)) || argv[i + 1] === undefined) {
       throw new Error(`unknown or incomplete argument "${flag}"`);
     }
-    opts[flag.slice(2)] = literal.has(flag.slice(2)) ? argv[i + 1] : resolve(argv[i + 1]);
+    const key = flag.slice(2);
+    const value = literal.has(key) ? argv[i + 1] : resolve(argv[i + 1]);
+    if (key === 'doc') (opts.doc ??= []).push(value);
+    else opts[key] = value;
   }
-  for (const req of ['design', 'checks']) if (!opts[req]) throw new Error(`--${req} is required`);
+  opts.role ??= 'builder';
+  if (!['builder', 'reviewer'].includes(opts.role)) throw new Error('--role is builder or reviewer');
+  for (const req of opts.role === 'builder' ? ['design', 'checks'] : ['design']) if (!opts[req]) throw new Error(`--${req} is required`);
+  for (const d of opts.doc ?? []) if (!existsSync(d)) throw new Error(`--doc ${d} does not exist`);
   if (opts['ngspice-compat'] !== undefined && opts['ngspice-compat'] !== 'psa') throw new Error('--ngspice-compat accepts only psa');
   if (opts.jobs !== undefined && !(/^\d+$/.test(opts.jobs) && Number(opts.jobs) >= 1 && Number(opts.jobs) <= 64)) throw new Error('--jobs must be a whole number from 1 to 64');
   for (const k of ['design', 'checks', 'sidecar', 'model-dir', 'thermal-model', 'intent']) {
@@ -125,6 +175,54 @@ export function createServer(opts, { log = () => {} } = {}) {
       elapsed_ms: (run.finished ?? Date.now()) - run.started,
       ...(run.state === 'failed' ? { reason: run.reason } : {}) };
   }
+
+  let reviewPromise = null;
+  const getReview = () => (reviewPromise ??= (async () => {
+    const { buildBundle, createReview } = await import('../engine/review.mjs');
+    let design, deck, sweep = null;
+    if (/\.kicad_sch$/i.test(opts.design)) {
+      const { buildDesign } = await import('../engine/kicad-adapter.mjs');
+      const built = await buildDesign({ schematic: opts.design, sidecar: opts.sidecar, modelDir: opts['model-dir'], intent: opts.intent });
+      design = { comps: built.comps, nets: built.nets };
+      deck = built.netlist;
+      sweep = { checkable_fraction: built.manifest.counts.checkable_fraction, not_checked: built.manifest.excluded, connectivity: built.manifest.notes };
+    } else {
+      const { parseNetlist } = await import('../engine/netlist.mjs');
+      deck = readFileSync(opts.design, 'utf8');
+      const nl = parseNetlist(deck);
+      const nets = new Map();
+      for (const c of nl.components) c.nodes.forEach((n, i) => { if (!nets.has(n)) nets.set(n, []); nets.get(n).push({ ref: c.refdes, pin: String(i + 1) }); });
+      design = { comps: nl.components.map(c => ({ ref: c.refdes, value: c.tail[0] ?? '' })), nets: [...nets].map(([name, nodes]) => ({ name, nodes })) };
+    }
+    const bundle = buildBundle({ design, deck, documents: (opts.doc ?? []).map(path => ({ path })), sweep, compat: opts['ngspice-compat'] ?? null });
+    return createReview(bundle);
+  })());
+
+  const reviewTools = {
+    kinux_review_bundle: async () => {
+      const { describeBundle } = await import('../engine/review.mjs');
+      return describeBundle((await getReview()).bundle);
+    },
+    kinux_read_document: async (args = {}) => {
+      const { readDocument } = await import('../engine/review.mjs');
+      const doc = readDocument((await getReview()).bundle, args.name, args.from ?? 1, args.to ?? Infinity);
+      if (!doc) throw new ToolError('unknown_document', `no document "${args.name}" in the bundle`);
+      return doc;
+    },
+    kinux_propose: async (args = {}) => {
+      const r = await getReview();
+      const { domain, ...proposal } = args;
+      const entry = await r.propose(proposal, { domain: domain ?? null });
+      if (opts['review-log']) appendFileSync(opts['review-log'], `${JSON.stringify(entry)}\n`);
+      return { id: entry.id, kind: entry.kind, status: entry.status, ...(entry.reason ? { reason: entry.reason } : {}), ...(entry.evidence ? { evidence: entry.evidence } : {}) };
+    },
+    kinux_get_review: async () => {
+      const { renderReport } = await import('../engine/review.mjs');
+      const r = await getReview();
+      const count = k => r.log.filter(e => e.status === k).length;
+      return { bundle_hash: r.bundle.hash, proposals: r.log.length, verified: count('verified'), rejected: count('rejected'), open: count('open'), report: renderReport(r) };
+    },
+  };
 
   const tools = {
     kinux_doctor: () => new Promise(res => {
@@ -212,6 +310,10 @@ export function createServer(opts, { log = () => {} } = {}) {
     },
   };
 
+  const role = opts.role ?? 'builder';
+  const toolset = role === 'reviewer' ? REVIEW_TOOLS : TOOLS;
+  const impl = role === 'reviewer' ? reviewTools : tools;
+
   function validateArgs(tool, args) {
     if (args === undefined || args === null) return {};
     if (typeof args !== 'object' || Array.isArray(args)) throw new ToolError('invalid_arguments', 'arguments must be an object');
@@ -225,6 +327,16 @@ export function createServer(opts, { log = () => {} } = {}) {
       if (sch.type === 'number' && (typeof v !== 'number' || v < sch.minimum || v > sch.maximum)) {
         throw new ToolError('invalid_arguments', `${k} must be a number from ${sch.minimum} to ${sch.maximum}`);
       }
+      if (sch.type === 'string' && ((sch.enum && !sch.enum.includes(v)) || (sch.maxLength && v.length > sch.maxLength))) {
+        throw new ToolError('invalid_arguments', `${k} must be ${sch.enum ? `one of ${sch.enum.join(', ')}` : `at most ${sch.maxLength} characters`}`);
+      }
+      if (sch.type === 'array' && (!Array.isArray(v) || v.length > (sch.maxItems ?? Infinity) || v.some(x => typeof x !== 'string' || x.length > (sch.items?.maxLength ?? Infinity)))) {
+        throw new ToolError('invalid_arguments', `${k} must be a list of short strings`);
+      }
+      if (sch.type === 'object' && (typeof v !== 'object' || v === null || Array.isArray(v) || Object.keys(v).length > (sch.maxProperties ?? Infinity)
+        || Object.entries(v).some(([kk, vv]) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(kk) || typeof vv !== 'number' || !Number.isFinite(vv)))) {
+        throw new ToolError('invalid_arguments', `${k} must map net names to numbers`);
+      }
     }
     return args;
   }
@@ -233,16 +345,16 @@ export function createServer(opts, { log = () => {} } = {}) {
     const { id, method, params } = msg;
     if (method === 'initialize') {
       return { protocolVersion: PROTOCOL_VERSION, capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'kinux', version: '0.1.0' }, instructions: VERDICT_CONTRACT };
+        serverInfo: { name: 'kinux', version: '0.1.0' }, instructions: role === 'reviewer' ? REVIEW_CONTRACT : VERDICT_CONTRACT };
     }
     if (method === 'ping') return {};
-    if (method === 'tools/list') return { tools: TOOLS.map(t => ({ ...t, _meta: { schemaVersion: SCHEMA_VERSION, role: 'builder' } })) };
+    if (method === 'tools/list') return { tools: toolset.map(t => ({ ...t, _meta: { schemaVersion: SCHEMA_VERSION, role: opts.role } })) };
     if (method === 'tools/call') {
-      const tool = TOOLS.find(t => t.name === params?.name);
+      const tool = toolset.find(t => t.name === params?.name);
       if (!tool) throw Object.assign(new Error(`unknown tool ${params?.name}`), { code: -32602 });
       try {
         const args = validateArgs(tool, params.arguments);
-        const result = await tools[tool.name](args);
+        const result = await impl[tool.name](args);
         callLog({ tool: tool.name, arguments: params.arguments ?? {}, isError: false, result });
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }], structuredContent: result, isError: false };
       } catch (err) {

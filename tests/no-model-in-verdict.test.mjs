@@ -39,6 +39,7 @@ export const VERDICT_ENTRIES = [
   'engine/operators.mjs',
   'engine/kicad-adapter.mjs',
   'engine/coverage.mjs',
+  'engine/review.mjs',
   'engine/cli.mjs',
   'server/queue/receipt.mjs',
 ];
