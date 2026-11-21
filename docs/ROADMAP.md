@@ -190,7 +190,7 @@ Good starting points. Each is one issue from STATUS section 8.
 A machine-readable list of limits (a datasheet maximum, an interface limit, a declared budget), each with an `affects` list that drives staleness. It is what lets the Villain's faults be validated without a model judging realism, which the project's own rule forbids.
 
 ### R16. AI Villain v0 · L
-The host coding agent proposes faults through MCP (`propose_fault`, `run_faults`, `get_survivors`). A proposed fault **counts toward the score only if its target and bound resolve to an entry in the registry** (R15). An agent-invented fault with no anchor is recorded as an unverified claim and excluded from the denominator. Depends on R14 and R15.
+The host coding agent proposes faults through MCP (`propose_fault`, `run_faults`, `get_survivors`). A proposed fault **counts toward the score only if its target and bound resolve to an entry in the registry** (R15). An agent-invented fault with no anchor is recorded as an unverified claim and excluded from the denominator. Depends on R14 and R15. The pattern to copy from Copperhead's model review (LEARNINGS section 7): agents produce structured proposals, not prose; deterministic verifiers decide every proposal and discard what they cannot ground; the verdict on each proposal comes back immediately so the agent can repair it; and a recorded run can be replayed without a model to reproduce the report.
 
 ### R17. Staleness and obligations · M
 The contract already has a `result.stale` event and the engine never emits it. When the design changes, every dependent result should be marked stale and shown that way, and a run should not be declarable "done" while a dependent check is unverified. This is what turns "parts verified, system not checked" from a sentence into something enforced.
@@ -248,6 +248,11 @@ Our CalculiX worker returns a bare number. Run three mesh levels and report a gr
 - **Why:** R6, Gate B and Gate C all need a person to judge items and keep the decision. Copperhead's Verification panel is a worked example: findings grouped into clusters "to judge", queue states (to judge, new, judged), a Coverage tab and a Decisions record (LEARNINGS section 5).
 - **Do:** group survivors (by operator and target), let a reviewer label each real gap, equivalent or noise with a reason, store the labels as events, and show the running equivalent fraction. It doubles as the harness for the proof test.
 - **Done when:** 30 survivors are judged in the viewer and the fraction appears with its sample size. Held back with the viewer work (D7), except that it is on the path to Gate A, so the plain-file version in R6 comes first.
+
+### R38. Check-writing and survivor-labelling agents, as proposals · M
+- **Why:** Gate B depends on AI-written checks, and R6 needs survivors labelled. Both are jobs a model can propose and cannot be trusted to decide (LEARNINGS section 7).
+- **Do:** a check-writing agent proposes assertions in our grammar, each with a verbatim datasheet citation (R33), a closed-form calculation or a measurement; our engine scores the result. A labelling agent proposes real gap, equivalent or noise with evidence. **A label stays "proposed" until a person confirms it or a solver demonstrates it**, and only confirmed labels count toward the equivalent fraction.
+- **Done when:** a labelling agent's proposals on 30 survivors are shown beside a person's labels, with the agreement rate reported, and the score never uses an unconfirmed label.
 
 ## 6. Surfaces: the viewer beside the agent
 

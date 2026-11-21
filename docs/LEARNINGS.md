@@ -114,7 +114,38 @@ The reviewer's single biggest risk, in its own words: Gate A cannot be passed be
 - **Practices worth copying** (Apache-2.0): CI that gates a release on the same job (`copperhead/.github/workflows/ci.yml`); a `doctor` preflight that names missing tools without running a model, which would fix K21 and K22; release hygiene from `fang` (one version source, a tag that must match it, Keep a Changelog); a pull-request template with an invariant checklist; a golden corpus of pinned boards with pinned expected scores.
 - **Resolve the licence question** (K18) and any contributor agreement before an outside contributor arrives. CERN-OHL-S boards are fine as test inputs but must not be copied into our repository.
 
-## 7. What is not verified
+## 7. How Copperhead's review verifies, and how Kinux should use subagents
+
+**How their review works** (`copperhead/src/review/run.ts` and `prompts.ts`, Apache-2.0, read from code on `main` of 2026-11-07):
+
+1. **A deterministic sweep runs first**, with no model. This is where findings such as "Label dangling" and "Rail without testpoint" come from.
+2. **A closed bundle**: the design and its source documents, every input recorded by hash.
+3. **One model pass per domain**, run in parallel up to a limit, each with a turn cap and a time cap. There are eight domains: power; MCU; storage, sensors and I/O; firmware against hardware; physical; routing and stackup; fabrication and assembly outputs; BOM ratings and traceability. A pass is read-only. It cannot run anything and calls read-only tools over the bundle.
+4. **The model produces proposals, not prose.** Six kinds: a *fact* (checked against the netlist), a *citation* (a verbatim quote, checked against the source), a *measurement* (geometry computed deterministically), a *calculation* (each input names the verified proposal it came from), a *finding* (it must name its premises, which must have survived verification, and carry a severity), and a *question* for whatever only a person, a measurement or a missing document can settle.
+5. **Deterministic verifiers decide every proposal, and anything they cannot ground is discarded.** The outcome comes back immediately, so the model can repair a rejected proposal.
+6. **The report is rendered from what the verifiers decided, never from the model's words**, and a stored run can be replayed with no model and must reproduce the report byte for byte.
+
+Rules written into the model's instructions that are worth keeping: a statement of absence needs evidence over the whole design (the complete member list of a net), not a glance; do not repeat a sweep finding without adding evidence, because a sweep finding can itself be wrong; prefer a few fully grounded findings to many weak ones; and "check the datasheet, not your memory: a number you cannot cite or calculate does not survive."
+
+The group names in the console ("Will it work", "Can it be built and tested") were **not found in the open-source code**, so they are probably the hosted console's own grouping. We do not know how it clusters findings.
+
+**How Kinux should use subagents in the product.** The principle is the same as theirs and as ours: *agents propose, deterministic verifiers decide.*
+
+- **Villain passes, one per domain** (electrical, thermal, mechanical, firmware and control). Each proposes faults as structured proposals. A verifier checks that the target exists in the design, that the bound is anchored to a registry limit, and that the fault is not a duplicate. The verdict comes back immediately so the agent can repair it. This is R16.
+- **Check-writing agents.** They propose assertions in our closed grammar, with a datasheet citation (a verbatim quote, verified as in R33), a closed-form calculation, or a measurement from one of our workers. Our engine then scores them. **The score of AI-written checks is the product**, and Gate B depends on AI-written tests.
+- **Survivor-labelling agents.** They propose a label for each survivor (real gap, equivalent, noise) with evidence. **A label must never leave "proposed" until a person confirms it or a solver demonstrates it.** Otherwise a model could raise the score simply by calling survivors equivalent. This is the incentive trap in the design.
+- **Independence.** Builder, Villain and scorer are separate roles in separate sessions, with the role set by how the server is launched, and with hidden fault sets (section 2).
+- **Closed, hashed, replayable.** Read-only tools over a hashed bundle. Every run records its proposals and the verifiers' decisions, and a replay re-verifies them with no model and must reproduce the report. That is also what makes a receipt (R7) trustworthy.
+- **Caps.** Turns, minutes, faults per round, and the share of unanchored proposals.
+- **Never:** a model judging pass or fail; a model verifying another model's claim; the Builder scoring itself.
+
+**How we should use subagents to build Kinux**, from what happened in this project:
+
+- **Research agents:** read-only, one angle each, required to cite paths and lines, with a cap on tool calls. I verify the headline claims before anything enters the docs. Reliability varied: the agent that read `fang`'s specification corrected something I had overstated, while the red-team agent did not read the specification at all. So put the deep read on one agent and have the others cite it, and cross-check where two disagree.
+- **Building agents:** one folder each, contracts frozen during the work, raw test output required, and the tests rerun by me. Usage limits stopped agents twice, so keep tasks small and resumable.
+- **Third-party code is not run without approval.** One install was blocked, and we waited for your approval rather than work around it.
+
+## 8. What is not verified
 
 - Only the GLB node names and `fang`'s confidence and coverage mechanism were checked by me. The rest rests on the agents' reading of code.
 - The Copperhead and `fang` clones are single-commit snapshots, so none of this tells us how long their work took.
