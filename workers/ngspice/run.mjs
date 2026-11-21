@@ -149,6 +149,19 @@ const ERROR_PATTERNS = [
   [/Error on line|Simulation interrupted due to error|syntax error|unknown parameter|premature EOF/i, 'netlist_unsupported'],
 ];
 
+/**
+ * ngspice compatibility modes Kinux will pass with `-D ngbehavior=<mode>`.
+ * Vendor PSpice models (TI's TLC555, for one) only load in `psa` mode. The
+ * value is chosen by the person running Kinux, never read from a design file,
+ * and anything outside this list is refused rather than passed through.
+ */
+export const COMPAT_MODES = new Set(['psa']);
+export function compatArgs(compat) {
+  if (compat === null || compat === undefined || compat === '') return [];
+  if (!COMPAT_MODES.has(compat)) throw new Error(`unsupported ngspice compatibility mode "${compat}"`);
+  return ['-D', `ngbehavior=${compat}`];
+}
+
 /** Classify a failed run into a contract reason_code. */
 export function classifyFailure({ stderr = '', stdout = '', timedOut = false, spawnError = null } = {}) {
   if (spawnError) return 'tool_missing';
@@ -167,10 +180,19 @@ export function classifyFailure({ stderr = '', stdout = '', timedOut = false, sp
 export async function runNetlist(netlist, opts = {}) {
   const {
     timeoutMs = DEFAULT_TIMEOUT_MS,
+    compat = null,
     alreadySanitized = false,
     allowWriteFiles = [],
     keepDir = false,
   } = opts;
+
+  if (compat !== null && compat !== undefined && compat !== '' && !COMPAT_MODES.has(compat)) {
+    return {
+      ok: false, blocked: false, stage: 'config', reason_code: 'tool_error',
+      reason: `unsupported ngspice compatibility mode "${compat}" (accepted: ${[...COMPAT_MODES].join(', ')})`,
+      netlist_sha256: sha256(netlist), measurements: {}, failed_measurements: [], tables: [], tool_versions: {},
+    };
+  }
 
   if (!alreadySanitized) {
     const s = sanitize(netlist, { allowWriteFiles });
@@ -196,7 +218,7 @@ export async function runNetlist(netlist, opts = {}) {
   try {
     await writeFile(file, netlist, 'utf8');
     // Argument array. No shell. Relative filename, cwd is the temp dir.
-    const r = await spawnCollect(NGSPICE_BIN, ['-b', 'circuit.cir'], { cwd: dir, timeoutMs });
+    const r = await spawnCollect(NGSPICE_BIN, [...compatArgs(compat), '-b', 'circuit.cir'], { cwd: dir, timeoutMs });
     const durationMs = Date.now() - started;
     const { measurements, failed } = parseMeasurements(r.stdout);
     const tables = parsePrintTables(r.stdout);
@@ -225,7 +247,7 @@ export async function runNetlist(netlist, opts = {}) {
       netlist_sha256: sha256(netlist),
       output_hash: sha256(normalized),
       result_hash: sha256(JSON.stringify({ measurements, tables: tables.map(t => ({ columns: t.columns, data: t.data })) })),
-      tool_versions: version.id ? { ngspice: version.id } : {},
+      tool_versions: { ...(version.id ? { ngspice: version.id } : {}), ...(compat ? { ngspice_compat: compat } : {}) },
       run_dir: keepDir ? dir : null,
       run_dir_files: files,
     };

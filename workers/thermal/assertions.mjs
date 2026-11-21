@@ -310,11 +310,11 @@ export function resistorValue(netlist, refdes) {
  * probe is an ordinary electrical assertion built here from an allowlisted
  * refdes; the bound is so wide it never matters -- only `measured` is used.
  */
-export async function probeCurrents(netlist, refdeses, { subject, timeoutMs } = {}) {
+export async function probeCurrents(netlist, refdeses, { subject, timeoutMs, compat } = {}) {
   const out = new Map();
   if (!refdeses.length) return { currents: out, deck: null };
   const assertions = refdeses.map(r => `I(${r}) between -1e12 and 1e12`);
-  const res = await verifySimulation(netlist, { analysis: 'op', assertions }, { subject, testIdPrefix: 'thermal-probe', timeoutMs });
+  const res = await verifySimulation(netlist, { analysis: 'op', assertions }, { subject, testIdPrefix: 'thermal-probe', timeoutMs, compat });
   const byText = new Map(res.results.map(r => [r.assertion, r]));
   refdeses.forEach((r, i) => {
     const e = byText.get(assertions[i]);
@@ -417,7 +417,7 @@ export async function verifyThermal(netlist, block, thermalModel, opts = {}) {
   });
 
   const need = [...new Set(plans.filter(p => !p.done).map(p => p.ref))];
-  const { currents } = await probeCurrents(netlist, need, { subject, timeoutMs: opts.timeoutMs });
+  const { currents } = await probeCurrents(netlist, need, { subject, timeoutMs: opts.timeoutMs, compat: opts.compat });
 
   for (const p of plans) {
     if (p.done) { results.push(p.done); continue; }

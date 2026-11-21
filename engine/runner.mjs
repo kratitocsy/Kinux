@@ -253,7 +253,7 @@ export function normaliseSuite(suite) {
  * subjects, which is what lets the gate line a mutant's result up with the
  * baseline's.
  */
-export async function runChecks(netlistText, suite, { subject = 'baseline', timeoutMs } = {}) {
+export async function runChecks(netlistText, suite, { subject = 'baseline', timeoutMs, compat } = {}) {
   const results = [];
   const runs = [];
   for (const block of suite.blocks) {
@@ -261,7 +261,7 @@ export async function runChecks(netlistText, suite, { subject = 'baseline', time
       // One-way electrical -> thermal: the thermal worker measures currents
       // through ngspice on this same netlist, then applies the lumped model.
       const th = await verifyThermal(netlistText, block, suite.thermalModel ?? block.model ?? null,
-        { subject, testIdPrefix: `${suite.id}:${block.prefix}`, timeoutMs });
+        { subject, testIdPrefix: `${suite.id}:${block.prefix}`, timeoutMs, compat });
       results.push(...th.results);
       runs.push({ block: block.prefix, kind: 'thermal', deck: null, duration_ms: null, result_hash: null });
       continue;
@@ -269,7 +269,7 @@ export async function runChecks(netlistText, suite, { subject = 'baseline', time
     const out = await verifySimulation(
       netlistText,
       { analysis: block.analysis, assertions: block.assertions, sources: block.sources },
-      { subject, testIdPrefix: `${suite.id}:${block.prefix}`, timeoutMs },
+      { subject, testIdPrefix: `${suite.id}:${block.prefix}`, timeoutMs, compat },
     );
     results.push(...out.results);
     runs.push({ block: block.prefix, deck: out.deck, duration_ms: out.run?.duration_ms ?? null, result_hash: out.run?.result_hash ?? null });
@@ -307,6 +307,7 @@ export async function runVerification(options) {
     domain = 'electronics',
     provenance = 'real',
     timeoutMs,
+    compat = null,
     useQueue = true,
     queuePath = ':memory:',
     onEvent,
@@ -333,7 +334,7 @@ export async function runVerification(options) {
   });
 
   // --- 1. Baseline. Always first. Nothing can be classified before it. ------
-  const baseline = await runChecks(netlist, suite, { subject: 'baseline', timeoutMs });
+  const baseline = await runChecks(netlist, suite, { subject: 'baseline', timeoutMs, compat });
   for (const r of baseline.results) {
     stream.queue({ test_id: r.test_id, title: titleFor(r), layer: r.layer, solver: r.solver });
   }
@@ -364,8 +365,8 @@ export async function runVerification(options) {
 
   // Equivalents are never simulated: they must not be able to acquire a verdict.
   const executed = useQueue
-    ? await runThroughQueue(runnable, suite, { timeoutMs, queuePath })
-    : await runDirectly(runnable, suite, { timeoutMs });
+    ? await runThroughQueue(runnable, suite, { timeoutMs, compat, queuePath })
+    : await runDirectly(runnable, suite, { timeoutMs, compat });
 
   const byId = new Map(executed.map(e => [e.mutant_id, e]));
 
@@ -428,10 +429,10 @@ export async function runVerification(options) {
 /* Dispatch                                                                   */
 /* -------------------------------------------------------------------------- */
 
-async function executeOne(mutant, suite, { timeoutMs }) {
+async function executeOne(mutant, suite, { timeoutMs, compat }) {
   const started = Date.now();
   try {
-    const { results } = await runChecks(mutant.text, suite, { subject: mutant.mutant_id, timeoutMs });
+    const { results } = await runChecks(mutant.text, suite, { subject: mutant.mutant_id, timeoutMs, compat });
     return { mutant_id: mutant.mutant_id, results, error: null, duration_ms: Date.now() - started };
   } catch (err) {
     // The worker itself broke (not a FAIL, not a NOT_CHECKED). That is an
@@ -460,14 +461,14 @@ async function runDirectly(prepared, suite, opts) {
  * path. A job that the queue could not complete becomes an ERROR outcome, never
  * a kill and never a survivor.
  */
-async function runThroughQueue(prepared, suite, { timeoutMs, queuePath }) {
+async function runThroughQueue(prepared, suite, { timeoutMs, compat, queuePath }) {
   if (!prepared.length) return [];
   let JobQueue, runOne;
   try {
     ({ default: JobQueue, runOne } = await import('../server/queue/queue.mjs'));
   } catch (err) {
     // No node:sqlite, or the queue is unavailable: fall back, loudly.
-    const out = await runDirectly(prepared, suite, { timeoutMs });
+    const out = await runDirectly(prepared, suite, { timeoutMs, compat });
     return out.map(o => ({ ...o, dispatch: `direct (queue unavailable: ${String(err?.message ?? err)})` }));
   }
 
@@ -488,7 +489,7 @@ async function runThroughQueue(prepared, suite, { timeoutMs, queuePath }) {
     for (;;) {
       const done = await runOne(queue, 'kinux-engine', async job => {
         const mutant = byId.get(job.payload.mutant_id);
-        return executeOne(mutant, suite, { timeoutMs });
+        return executeOne(mutant, suite, { timeoutMs, compat });
       }, { ttlMs: Math.max(5_000, jobTimeout), timeoutMs: jobTimeout });
       if (!done) break;                              // queue drained
       if (done.outcome === 'completed') {

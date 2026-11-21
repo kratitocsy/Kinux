@@ -1028,7 +1028,7 @@ export async function verifySimulation(netlist, block, opts = {}) {
 
   // 3. Run it. runNetlist sanitizes again on its own: the deck is checked by
   //    the one authoritative implementation on the path to the binary.
-  const run = await runNetlist(compile.deck, { timeoutMs: opts.timeoutMs });
+  const run = await runNetlist(compile.deck, { timeoutMs: opts.timeoutMs, compat: opts.compat });
 
   for (const c of compile.checks) {
     results.push(
