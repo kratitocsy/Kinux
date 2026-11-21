@@ -2,3 +2,5 @@ node_modules/
 *.log
 .DS_Store
 .venv/
+# KiCad writes a per-board UI-state file next to any board it opens (KiCad 8+)
+*.kicad_prl
