@@ -1,0 +1,48 @@
+* 48 V phase-leg support slice (gate drive + shunt sense + rail feedback)
+*
+* THIS IS NOT A BLDC DRIVER. It is three support networks that sit around one
+* low-side switch of a 48 V three-phase inverter leg. There is no MOSFET, no
+* body diode, no bootstrap high side, no dead time and no motor load here.
+* See README.md for the full list of what is absent and why.
+*
+* Built from ngspice built-in primitives only (R, C, V, I, E). No .include,
+* no .lib, no vendor models -- so there is nothing to licence-check and the
+* run is byte-reproducible on ngspice 42.
+*
+* Nets:
+*   drv    gate-driver output pin        gate   MOSFET gate (after Rg)
+*   bus    48 V DC link                  fb     divided bus, to ADC
+*   sh     shunt high side               amp    current-sense amp output
+*   adc_i  filtered current sense, to ADC
+*
+* ---------------------------------------------------------------------------
+* 1. Low-side gate drive network
+* ---------------------------------------------------------------------------
+* The driver is an ideal 12 V source with a 20 ns output edge starting at
+* 100 ns. For a DC operating point ngspice uses the DC value (driver held on);
+* the transient testbenches run with UIC so the edge is seen from 0 V.
+VDRV drv 0 DC 12 PWL(0 0 100n 0 120n 12 10m 12)
+RG   drv  gate 10
+RGS  gate 0    10k
+CISS gate 0    4.7n
+*
+* ---------------------------------------------------------------------------
+* 2. Low-side shunt current sense
+* ---------------------------------------------------------------------------
+* ISRC stands in for the phase current in the low-side return path. Its AC
+* magnitude is scaled to 25 A so the sense chain's passband gain is exactly
+* unity (25 A * 2 mOhm * 20 = 1.0 V), which is what corner() measures.
+ISRC 0    sh   DC 20 AC 25
+RSH  sh   0    2m
+EAMP amp  0    sh 0 20
+RF   amp  adc_i 1k
+CF   adc_i 0   100n
+*
+* ---------------------------------------------------------------------------
+* 3. DC-link voltage feedback
+* ---------------------------------------------------------------------------
+VBUS bus  0    DC 48
+RFB1 bus  fb   100k
+RFB2 fb   0    4.99k
+CFB  fb   0    100n
+.end
