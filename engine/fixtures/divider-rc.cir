@@ -1,0 +1,9 @@
+* Kinux demo board: 5V rail, resistor divider, RC output filter, load
+V1 vcc 0 DC 5 PULSE(0 5 0 1u 1u 1 2)
+R1 vcc mid 10k
+R2 mid 0 10k
+C1 vcc 0 10u
+R3 mid out 1k
+C2 out 0 1u
+RL out 0 100k
+.end
