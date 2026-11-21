@@ -66,6 +66,13 @@ R9 isolation  (before any third-party design runs anywhere that matters)
 ### R2. Choose and licence-check three real boards · S · Human
 - **Why:** Gate A needs three real boards, and so does everything after it (STEPS S0.3). We have none.
 - **Do:** pick one open 48 V BLDC driver board and two fallbacks, as the plan describes. Each needs KiCad source, a permissive or usable licence, no non-commercial terms, and a way to get a 3D model. Write `examples/<board>/LICENSE-AUDIT.md`. An agent can research candidates; a person signs off.
+- **Candidates found, not yet vendored or signed off.** Copperhead publishes example boards in its GitHub organisation, each designed by its own agent. Two are well suited:
+  - `copperhead-tps5430-buck-converter`: 12 V to 5 V at 3 A, 37 parts.
+  - `copperhead-555-oscillator`: 10 kHz to 1 MHz, 30 parts.
+
+  Both have hardware under **CERN-OHL-S-2.0** (strongly reciprocal: a distributed modified version must be released under the same licence) and documents under CC-BY-4.0. Both are **KiCad 10 format** (PCB file version 20260206), so they need R8. Neither has been built, and both say so plainly. Neither ships a SPICE model.
+
+  What makes them useful: the 555 board's README reports an ngspice study, with TI's TLC555 model, finding the top of its range at about 744 kHz against a 1 MHz target, so the original design fails its own spec. That is a ready-made case for baseline gating and the cap. The buck converter names an open question: whether the TPS5430's 4 to 6 A current limit overloads its 5 A catch diode in a sustained output short. That is a fault the engine should be able to find. Whether we may vendor them, and whether our modified copies must then carry CERN-OHL-S, is a licence call for you (D4).
 - **Done when:** the founder has approved three boards in writing.
 
 ### R3. KiCad project to SPICE netlist · L
@@ -218,7 +225,7 @@ These cannot be settled by writing code. Until they are, the items that depend o
 
 ## 10. Top risks
 
-1. **Real boards may be mostly unsimulatable.** Many ICs have no SPICE model, so the checkable fraction on a real board could be small. We report it honestly, but it limits how useful the score is. R3 is where we find out. Mitigations: behavioural models, a focus on power and analog subcircuits, and reporting model coverage as a first-class number.
+1. **Real boards may be mostly unsimulatable.** Many ICs have no SPICE model, so the checkable fraction on a real board could be small. We report it honestly, but it limits how useful the score is. R3 is where we find out. One data point from the buck converter's bill of materials (read, not tested): 23 of its 24 electrical parts are discrete (10 capacitors, 4 diodes, 5 resistors, a fuse, a ferrite jumper, an inductor, a transistor), and the one IC, the TPS5430, has no model in the repository. Mostly-discrete boards look checkable apart from the controller. Mitigations: behavioural models, a focus on power and analog subcircuits, and reporting model coverage as a first-class number.
 2. **Gaming the score.** AI-written tests can aim at known operators. Hidden fault sets (phase I) are the planned answer.
 3. **Equivalent mutants** can inflate or deflate the score (R6).
 4. **Copperhead walks toward verification.** Its roadmap includes a SPICE gate. Our edge is what does not bolt on in a weekend: mutation testing, validated physics, and honest `NOT_CHECKED` reporting. A viewer and an MCP server are not an edge.
