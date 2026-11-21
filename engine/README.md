@@ -15,7 +15,8 @@ verdict in a report was invented by this code.
 | `equivalence.mjs` | Conservative equivalent-mutant detection |
 | `runner.mjs` | Baseline, gate, mutant dispatch, classification, event stream |
 | `report.mjs` | The score, the cap, JSON and Markdown |
-| `cli.mjs` | `kinux verify` |
+| `cli.mjs` | `kinux verify` (a `.cir`, or a `.kicad_sch` with `--sidecar`; exit 4 = nothing checkable) |
+| `kicad-adapter.mjs` | KiCad schematic to SPICE deck through the real `kicad-cli`: per-part manifest (modelled / not_checked with reason), checkable fraction, value and net normalisation, sidecar sources and models, check-name validation. Schema in its header |
 | `fixtures/` | A demo board and two check suites, used by `tests/engine.test.mjs` |
 
 ## Operators

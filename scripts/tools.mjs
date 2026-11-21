@@ -38,6 +38,7 @@ export const SUITES = {
   'live': ['ngspice'],
   'pcb-worker': ['kicad-cli'],
   'pcb-erc-drc': ['kicad-cli'],
+  'kicad-adapter': ['ngspice', 'kicad-cli'],
   'fea': ['ccx', 'gmsh'],
 };
 
