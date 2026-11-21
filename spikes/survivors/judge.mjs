@@ -46,7 +46,8 @@ function fromLabels(rows) {
   return rows.map(r => ({
     id: r.id, description: r.description, target: r.target,
     solver_identical: r.basis === 'solver',
-    evidence: r.basis === 'solver' ? String(r.evidence) : (Array.isArray(r.evidence) ? r.evidence[0] : String(r.evidence ?? '')),
+    evidence: r.basis === 'solver' ? String(r.evidence) : 'not solver-identical (the measured difference is in the profile that produced these labels)',
+    note: r.basis === 'solver' ? null : (Array.isArray(r.evidence) ? r.evidence[0] : String(r.evidence ?? '')),
     proposal: r.basis === 'solver' ? null : r,
   }));
 }
@@ -62,6 +63,7 @@ export function renderSheet(items, title) {
     out.push(`## ${it.id}`, '', `- what: ${it.description ?? ''}`, `- solver: ${it.evidence}`);
     if (it.solver_identical) out.push('- **solver-identical: counted as EQUIVALENT by measurement; no decision needed**');
     if (it.proposal) out.push(`- proposed (not confirmed): ${it.proposal.label} (${it.proposal.unanimous ? 'unanimous' : 'not unanimous'} among agent reviewers)`);
+    if (it.note) out.push(`- an agent reviewer's note (a model's reading, not a measurement): ${it.note}`);
     out.push('', 'decision: ', 'reason: ', '');
   }
   return out.join('\n');
