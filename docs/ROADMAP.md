@@ -99,6 +99,13 @@ R9 isolation  (before any third-party design runs anywhere that matters)
 ### R8. KiCad 8 or later · S once decided · Human
 - **Why:** ERC, DRC and GLB export need it, and **so does opening any modern board at all**. KiCad 7 refuses files saved by KiCad 8 or later: 18 of 19 real schematics and the one board we tried all failed (K4). That makes this the gate on R3, so the decision (D2) should be made first, not last. It also lets us check the five hand-authored report fixtures against real output.
 - **Do:** decide how to get it (D2). Then wire `runErc` and `runDrc` to call `--format json --output <path>` and return the path (`workers/pcb/erc-drc-report.mjs` already reads it).
+- **A recipe known to work elsewhere, which we have not run.** Copperhead's CI (`.github/workflows/ci.yml` in its repository) installs KiCad 10 on a GitHub Actions Ubuntu runner from `ppa:kicad/kicad-10.0-releases`, and its comments record four traps worth knowing before we repeat it:
+  1. On Ubuntu 26.04 images, apt can silently install the distribution's own KiCad 9 instead of the PPA's, unless you pass `-o APT::Architecture-Variants=amd64`.
+  2. Install `kicad-footprints` as well, or ERC reports every footprint library as missing and the checks fail on the environment rather than on the design.
+  3. `kicad-cli` never creates its global footprint-library table when run headless. Copy `/usr/share/kicad/template/fp-lib-table` into `~/.config/kicad/<version>/` first.
+  4. Check the version by name in CI and fail there, instead of as dozens of "Failed to load" test errors when a runner or the PPA drifts.
+
+  Their installer also deals with macOS, where `kicad-cli` lives inside `KiCad.app` and is not on `PATH`: it searches the standard install folders and offers an environment-variable override. We should do both (K22). By their own comment, Ubuntu 26.04 ships KiCad 9, so a newer base image would also work without a PPA.
 - **Done when:** ERC and DRC run on a real board, and the five hand-authored fixtures are replaced or confirmed.
 
 ### R9. Isolate the solvers · L · Human
@@ -202,7 +209,7 @@ These cannot be settled by writing code. Until they are, the items that depend o
 | # | Decision | Blocks |
 |---|---|---|
 | **D1** | **Kinux's licence.** A permissive licence is suggested. The project already contains Apache-2.0 code, so GPLv2 is ruled out. | everything public; R2's board terms |
-| **D2** | **How to get KiCad 8 or later.** Options: the KiCad PPA (reachable from the container, but adding it was refused by the container's policy, so you would allow it or do it on your own machine), a pinned container image (needs Docker), or a CI runner that has it. **This is now the first thing to decide**, because without it no modern board can be opened. | R8, **R3**, and K4 |
+| **D2** | **How to get KiCad 8 or later.** Options: the KiCad PPA (reachable from the container, but adding it was refused by the container's policy, so you would allow it or do it on your own machine), a CI runner that installs it (Copperhead's workflow is a worked example, see R8), a newer base image (Ubuntu 26.04 reportedly ships KiCad 9), or a pinned container image (needs Docker). **This is now the first thing to decide**, because without it no modern board can be opened. | R8, **R3**, and K4 |
 | **D3** | **Where untrusted designs run.** Docker on your own machine, or a small rented Linux box. | R9, R23 |
 | **D4** | **Which three boards.** | R2, R3, R13 |
 | **D5** | **Commitment and the start date.** The plan's schedule assumes week 1 is 23 November, which was never confirmed, and asks for a pause plan. | every date on this page |
