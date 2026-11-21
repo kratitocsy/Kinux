@@ -27,6 +27,8 @@
 
 import { createHash } from 'node:crypto';
 import { verifySimulation } from '../workers/ngspice/assertions.mjs';
+import { verifyThermal } from '../workers/thermal/assertions.mjs';
+import { THERMAL_TOOL_ID } from '../workers/thermal/model.mjs';
 import { ngspiceVersion } from '../workers/ngspice/run.mjs';
 import { validateEvent } from '../contracts/check-run.mjs';
 import { parseNetlist } from './netlist.mjs';
@@ -204,7 +206,7 @@ export class EventStream {
   }
 
   /** Emit a result, queueing its test first if it was never queued (rule 5). */
-  result(result, { title, layer = 'netlist', solver = 'ngspice' } = {}) {
+  result(result, { title, layer = result.layer ?? 'netlist', solver = result.solver ?? 'ngspice' } = {}) {
     if (!this.queued.has(result.test_id)) {
       this.queue({ test_id: result.test_id, title: title ?? result.assertion ?? result.test_id, layer, solver });
     }
@@ -216,7 +218,8 @@ export class EventStream {
     for (const k of ['measured', 'limit', 'units', 'reason_code', 'reason']) {
       if (result[k] !== undefined) data[k] = result[k];
     }
-    return this.emit('test.result', data, { kind: 'solver', id: 'ngspice-worker' });
+    // Thermal results come from the thermal worker, not ngspice.
+    return this.emit('test.result', data, { kind: 'solver', id: result.layer === 'thermal' ? 'thermal-worker' : 'ngspice-worker' });
   }
 
   toJSONL() { return this.events.map(e => JSON.stringify(e)).join('\n') + '\n'; }
@@ -237,6 +240,9 @@ export function normaliseSuite(suite) {
   return {
     id: (Array.isArray(suite) ? null : suite?.id) ?? 'checks',
     title: (Array.isArray(suite) ? null : suite?.title) ?? null,
+    // Thermal blocks (kind: 'thermal') are judged against this design's lumped
+    // thermal model. Absent model => every T() check is NOT_CHECKED/no_material_data.
+    thermalModel: (Array.isArray(suite) ? null : suite?.thermalModel) ?? null,
     blocks: blocks.map((b, i) => ({ ...b, index: i, prefix: b.prefix ?? `b${i}` })),
   };
 }
@@ -251,6 +257,15 @@ export async function runChecks(netlistText, suite, { subject = 'baseline', time
   const results = [];
   const runs = [];
   for (const block of suite.blocks) {
+    if (block.kind === 'thermal') {
+      // One-way electrical -> thermal: the thermal worker measures currents
+      // through ngspice on this same netlist, then applies the lumped model.
+      const th = await verifyThermal(netlistText, block, suite.thermalModel ?? block.model ?? null,
+        { subject, testIdPrefix: `${suite.id}:${block.prefix}`, timeoutMs });
+      results.push(...th.results);
+      runs.push({ block: block.prefix, kind: 'thermal', deck: null, duration_ms: null, result_hash: null });
+      continue;
+    }
     const out = await verifySimulation(
       netlistText,
       { analysis: block.analysis, assertions: block.assertions, sources: block.sources },
@@ -308,6 +323,7 @@ export async function runVerification(options) {
 
   const version = await ngspiceVersion();
   const tool_versions = version.id ? { ngspice: version.id } : {};
+  if (suite.blocks.some(b => b.kind === 'thermal')) tool_versions.thermal = THERMAL_TOOL_ID;
   stream.emit('run.started', {
     project,
     domain,
@@ -319,7 +335,7 @@ export async function runVerification(options) {
   // --- 1. Baseline. Always first. Nothing can be classified before it. ------
   const baseline = await runChecks(netlist, suite, { subject: 'baseline', timeoutMs });
   for (const r of baseline.results) {
-    stream.queue({ test_id: r.test_id, title: titleFor(r) });
+    stream.queue({ test_id: r.test_id, title: titleFor(r), layer: r.layer, solver: r.solver });
   }
   for (const r of baseline.results) stream.result(r);
   const gate = new BaselineGate(baseline.results);
@@ -332,6 +348,12 @@ export async function runVerification(options) {
   } catch (err) {
     if (!(err instanceof PatchError)) throw err;
     generationErrors.push({ operator: err.patch?.operator ?? null, target: err.patch?.target ?? null, message: err.message });
+  }
+  // Hand-written mutants (e.g. examples/phase-leg-support/mutants.mjs), judged
+  // exactly like generated ones: same gate, same classification.
+  for (const m of options.extraMutants ?? []) {
+    if (typeof m?.mutant_id !== 'string' || typeof m?.text !== 'string') throw new Error('an extra mutant needs mutant_id and text');
+    generated.push({ operator: 'hand', operator_title: 'hand-written', layer: 'netlist', origin: 'fixed', target: m.target ?? m.mutant_id, description: m.description ?? m.mutant_id, ...m });
   }
 
   const duplicates = findDuplicates(generated);
@@ -390,7 +412,7 @@ export async function runVerification(options) {
     domain,
     provenance,
     tool_versions,
-    suite: { id: suite.id, title: suite.title, blocks: suite.blocks.map(b => ({ prefix: b.prefix, analysis: b.analysis, assertions: b.assertions })) },
+    suite: { id: suite.id, title: suite.title, blocks: suite.blocks.map(b => ({ prefix: b.prefix, kind: b.kind ?? 'simulation', analysis: b.analysis, assertions: b.assertions })) },
     baseline: { results: baseline.results, runs: baseline.runs, blocked: gate.blocked, killable: gate.killableIds },
     gate,
     mutants: outcomes,

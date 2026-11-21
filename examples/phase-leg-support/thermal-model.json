@@ -1,0 +1,62 @@
+{
+  "kind": "kinux.thermal.lumped",
+  "version": 1,
+  "design": "phase-leg-support.cir",
+  "model": "lumped steady-state, one-way electrical→thermal coupling",
+  "note": "No value below is from a specific vendor datasheet: this design names no part numbers. Every figure is a stated design rule or an explicit assumption, and says which. RF, RFB2, CF, CFB, CISS and the sources deliberately have no entry: a check on them is NOT_CHECKED / no_material_data.",
+  "ambient_c": {
+    "value": 40,
+    "source": "assumed: air temperature inside a closed motor-drive enclosure; not measured"
+  },
+  "components": {
+    "RSH": {
+      "description": "2 mOhm current-sense shunt, 2512 metal-element, 2 W class",
+      "p_max_w": {
+        "value": 2,
+        "source": "design_rule: the README sizes RSH for a 2 W 2512 shunt (0.8 W at 20 A must fit with margin)"
+      },
+      "rth_c_per_w": {
+        "value": 50,
+        "source": "design_rule: derived from a typical 2512 metal-element derating curve (full rated power at 70 degC, zero at 170 degC): (170 - 70) K / 2 W = 50 K/W on its reference board; not one part's datasheet"
+      },
+      "cth_j_per_k": {
+        "value": 0.1,
+        "source": "assumed: part body plus the copper directly under its pads, giving tau = 5 s; order of magnitude only"
+      },
+      "t_max_c": {
+        "value": 125,
+        "source": "design_rule: keep any part below 125 degC so the FR-4 under it stays below its glass transition"
+      }
+    },
+    "RG": {
+      "description": "10 Ohm gate resistor, 0805 thick film, 0.125 W class",
+      "p_max_w": {
+        "value": 0.125,
+        "source": "design_rule: 0805 thick-film resistors are commonly rated 0.125 W at 70 degC"
+      },
+      "rth_chain": [
+        { "name": "body-to-pads", "value": 300, "source": "assumed: about half of the derating-curve figure below is the part itself" },
+        { "name": "pads-to-ambient", "value": 380, "source": "assumed: the rest is the board and air; together they match (155 - 70) K / 0.125 W = 680 K/W from a typical 0805 derating curve (design rule)" }
+      ],
+      "t_max_c": {
+        "value": 125,
+        "source": "design_rule: keep any part below 125 degC so the FR-4 under it stays below its glass transition"
+      }
+    },
+    "RFB1": {
+      "description": "100 kOhm DC-link divider top leg, 0805 thick film",
+      "p_max_w": {
+        "value": 0.125,
+        "source": "design_rule: 0805 thick-film resistors are commonly rated 0.125 W at 70 degC"
+      },
+      "rth_c_per_w": {
+        "value": 680,
+        "source": "design_rule: (155 - 70) K / 0.125 W = 680 K/W from a typical 0805 derating curve"
+      },
+      "t_max_c": {
+        "value": 125,
+        "source": "design_rule: keep any part below 125 degC so the FR-4 under it stays below its glass transition"
+      }
+    }
+  }
+}

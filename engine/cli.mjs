@@ -18,6 +18,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, resolve, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseSimulationBlocks } from '../workers/ngspice/assertions.mjs';
+import { parseThermalBlocks } from '../workers/thermal/assertions.mjs';
 import { checkRun } from '../contracts/check-run.mjs';
 import { runVerification } from './runner.mjs';
 import { buildReport, finishRun, renderMarkdown, scoreLine } from './report.mjs';
@@ -36,6 +37,9 @@ export const USAGE = `kinux verify -- mutation-test a circuit's check suite
   --operators <ids>   comma-separated operator ids (default: all)
   --run-id <id>       run id for the event stream (default: generated)
   --project <name>    project name recorded in the report (default: the design's filename)
+  --thermal-model <f> JSON lumped thermal model for "## Thermal" blocks in --checks
+                      (see workers/thermal/README.md). Without it, every T()
+                      check is NOT_CHECKED (no_material_data).
   --no-queue          run mutants directly instead of through server/queue
   --timeout <ms>      per-simulation timeout (default 20000)
   --serve [port]      stream the run live over SSE while it executes, and keep
@@ -50,7 +54,7 @@ export const USAGE = `kinux verify -- mutation-test a circuit's check suite
 
 /** Parse argv into an options object. Pure, so the tests can use it. */
 export function parseArgs(argv) {
-  const out = { command: null, design: null, checks: null, out: 'kinux-run', threshold: 0.7, limit: Infinity, operators: null, runId: null, project: null, useQueue: true, timeoutMs: undefined, json: false, quiet: false, help: false, serve: false, port: 0 };
+  const out = { command: null, design: null, checks: null, out: 'kinux-run', threshold: 0.7, limit: Infinity, operators: null, runId: null, project: null, useQueue: true, timeoutMs: undefined, json: false, quiet: false, help: false, serve: false, port: 0, thermalModel: null };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -69,6 +73,7 @@ export function parseArgs(argv) {
       case '--run-id': out.runId = next(); break;
       case '--project': out.project = next(); break;
       case '--no-queue': out.useQueue = false; break;
+      case '--thermal-model': out.thermalModel = next(); break;
       // --serve takes an OPTIONAL port, so only consume the next argv entry
       // when it really is one. "--serve --json" must not eat "--json".
       case '--serve': {
@@ -104,8 +109,8 @@ export function loadSuite(path) {
     if (!Array.isArray(blocks) || !blocks.length) throw new Error(`${path} has no "blocks"`);
     return { id: parsed.id ?? 'checks', title: parsed.title ?? null, blocks };
   }
-  const blocks = parseSimulationBlocks(text);
-  if (!blocks.length) throw new Error(`${path} contains no "## Simulation" block`);
+  const blocks = [...parseSimulationBlocks(text), ...parseThermalBlocks(text)];
+  if (!blocks.length) throw new Error(`${path} contains no "## Simulation" or "## Thermal" block`);
   return { id: 'checks', title: null, blocks };
 }
 
@@ -130,6 +135,7 @@ export async function main(argv, io = {}) {
   try {
     netlist = readFileSync(resolve(opts.design), 'utf8');
     suite = loadSuite(resolve(opts.checks));
+    if (opts.thermalModel) suite.thermalModel = JSON.parse(readFileSync(resolve(opts.thermalModel), 'utf8'));
   } catch (e) {
     err(`could not read the inputs: ${e.message}`);
     return 2;
