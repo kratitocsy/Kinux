@@ -8,7 +8,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
+import { tryLaunchChromium } from './helpers/browser.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -150,7 +150,9 @@ test('the offline export bundle includes the thermal module', () => {
 // ---- in a real browser ------------------------------------------------------
 
 test('browser: the thermal section renders per part, selection shows the mutant, the field stays unwired', { timeout: 120_000 }, async t => {
-  const { chromium } = createRequire(import.meta.url)('playwright');
+  const { browser, skipReason } = await tryLaunchChromium();
+  if (!browser) return t.skip(skipReason);
+  t.after(() => browser.close());
   const dir = await mkdtemp(join(tmpdir(), 'kinux-thermal-'));
   const live = await serveRun({
     createRunServer, validate: validateEvent, runId: 'r-thermal', root: dir, viewerRoot: join(ROOT, 'viewer'),
@@ -159,8 +161,6 @@ test('browser: the thermal section renders per part, selection shows the mutant,
   for (const ev of fixture()) live.bridge.sink(ev);
   assert.equal(live.bridge.ok, true, live.bridge.summary());
 
-  const browser = await chromium.launch();
-  t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1600, height: 1100 } });
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));

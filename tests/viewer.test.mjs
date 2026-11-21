@@ -12,7 +12,6 @@ import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { dirname, join, extname, normalize } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
-import { createRequire } from 'node:module';
 
 import { checkRun, computeScore, wilson } from '../contracts/check-run.mjs';
 import {
@@ -22,8 +21,7 @@ import {
 } from '../viewer/reducer.mjs';
 import { exportRunHTML, buildBundle } from '../viewer/export.mjs';
 
-const require = createRequire(import.meta.url);
-const { chromium } = require('playwright');
+import { tryLaunchChromium } from './helpers/browser.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
@@ -77,7 +75,15 @@ function startStatic(virtual = {}) {
   return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port })));
 }
 
-let srv, port, browser;
+let srv, port, browser, skipReason;
+
+/** A test that needs the browser: it skips, with the reason, when there is none. */
+function browserTest(name, fn) {
+  return test(name, async t => {
+    if (!browser) return t.skip(skipReason);
+    return fn(t);
+  });
+}
 const VIRTUAL = {
   '/__fixtures/real.jsonl': toJSONL(ALL_REAL),
   '/__fixtures/mixed.jsonl': toJSONL(MIXED),
@@ -86,7 +92,7 @@ const VIRTUAL = {
 
 before(async () => {
   ({ server: srv, port } = await startStatic(VIRTUAL));
-  browser = await chromium.launch();
+  ({ browser, skipReason } = await tryLaunchChromium());
 });
 after(async () => {
   await browser?.close();
@@ -257,7 +263,7 @@ test('selecting a mutant expands to its target, and its checks are reachable', (
 // 3. Browser: the provenance badge on every panel
 // ===========================================================================
 
-test('browser: a synthetic run shows a visible synthetic badge on every panel', async () => {
+browserTest('browser: a synthetic run shows a visible synthetic badge on every panel', async () => {
   const page = await openViewer();
   for (const panel of ['log', 'design', 'instruments']) {
     const badge = page.locator(`[data-testid="provenance-${panel}"]`);
@@ -277,7 +283,7 @@ test('browser: a synthetic run shows a visible synthetic badge on every panel', 
   await page.close();
 });
 
-test('browser: a real run shows no synthetic badge anywhere', async () => {
+browserTest('browser: a real run shows no synthetic badge anywhere', async () => {
   const page = await openViewer('run=/__fixtures/real.jsonl');
   for (const panel of ['log', 'design', 'instruments', 'overall']) {
     const badge = page.locator(`[data-testid="provenance-${panel}"]`);
@@ -290,7 +296,7 @@ test('browser: a real run shows no synthetic badge anywhere', async () => {
   await page.close();
 });
 
-test('browser: a mixed run shows the weaker label, never the stronger', async () => {
+browserTest('browser: a mixed run shows the weaker label, never the stronger', async () => {
   const page = await openViewer('run=/__fixtures/mixed.jsonl');
   for (const panel of ['log', 'design', 'instruments', 'overall']) {
     const badge = page.locator(`[data-testid="provenance-${panel}"]`);
@@ -318,7 +324,7 @@ test('browser: a mixed run shows the weaker label, never the stronger', async ()
 // 4. Browser: NOT_CHECKED is never a pass and never counted
 // ===========================================================================
 
-test('browser: NOT_CHECKED is never rendered as a pass or counted in the score', async () => {
+browserTest('browser: NOT_CHECKED is never rendered as a pass or counted in the score', async () => {
   const page = await openViewer();
 
   assert.equal((await page.locator('[data-testid="score-fraction"]').innerText()).trim(), '2 killed / 3 checkable');
@@ -353,7 +359,7 @@ test('browser: NOT_CHECKED is never rendered as a pass or counted in the score',
 // 5. Browser: cross-panel selection (S1.3)
 // ===========================================================================
 
-test('browser: clicking a surviving mutant highlights all three panels', async () => {
+browserTest('browser: clicking a surviving mutant highlights all three panels', async () => {
   const page = await openViewer();
   assert.equal(await page.locator('.selected').count(), 0, 'nothing is selected at rest');
 
@@ -396,7 +402,7 @@ test('browser: clicking a surviving mutant highlights all three panels', async (
 // 6. Browser: the design panel is honest about what it does not have
 // ===========================================================================
 
-test('browser: the design panel says plainly that no 3D solver is connected', async () => {
+browserTest('browser: the design panel says plainly that no 3D solver is connected', async () => {
   const page = await openViewer();
   const design = page.locator('.panel[data-panel="design"]');
   const text = await design.innerText();
@@ -426,7 +432,7 @@ test('the export bundle contains no module syntax and no network references', ()
   assert.equal(/\bsrc=/i.test(html), false, 'no external script or image sources');
 });
 
-test('browser: the static export opens from file:// with the network blocked', async () => {
+browserTest('browser: the static export opens from file:// with the network blocked', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'kinux-export-'));
   const out = join(dir, 'run.html');
   writeFileSync(out, exportRunHTML(EVENTS, { generatedAt: '2026-11-21T00:00:00.000Z' }));

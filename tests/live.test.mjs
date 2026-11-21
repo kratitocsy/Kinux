@@ -363,15 +363,15 @@ test('serving files is opt-in: without viewerRoot the server serves none', async
 });
 
 test('in a real browser, the panels fill WHILE the solver is still running', { timeout: 180_000 }, async t => {
-  const { createRequire } = await import('node:module');
-  const { chromium } = createRequire(import.meta.url)('playwright');
+  const { tryLaunchChromium } = await import('./helpers/browser.mjs');
+  const { browser, skipReason } = await tryLaunchChromium();
+  if (!browser) return t.skip(skipReason);
+  t.after(() => browser.close());
   const { runVerification } = await import('../engine/runner.mjs');
   const { buildReport, finishRun } = await import('../engine/report.mjs');
   const { loadSuite } = await import('../engine/cli.mjs');
 
   const live = await servedWithViewer(t, 'browser-run');
-  const browser = await chromium.launch();
-  t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
