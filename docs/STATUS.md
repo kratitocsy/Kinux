@@ -158,6 +158,37 @@ Several bounds are the BOM's 1% resistor tolerance turned into currents (arithme
 The loop's files are outside the repository with the board (`gate-a/loop/qo/`). The MCP server is
 therefore known to work with Claude Code as a client, by hand; R14's automated client tests are not built.
 
+### The first review by domain subagents (2026-11-21)
+
+Copperhead's review pattern on Kinux's verifiers (`engine/review.mjs`, `mcp/server.mjs --role reviewer`,
+`mcp/agents/`). A headless Claude Code session spawned four subagents in parallel (power, protection,
+interfaces, BOM and ratings) on quiet-orbit. Each could use only the three review tools: no file
+reading, no shell, no web, so it saw only the hashed bundle (the KiCad netlist, SPEC.md, BOM.md and
+README.md). Each submitted proposals; the verifiers decided each at once.
+
+- **89 proposals: 73 verified, 8 rejected, 8 open questions for a person.** 11 findings: 2 major,
+  4 minor, 5 info (requirements confirmed: QO-001 CC terminations, QO-006 reset pull-up, QO-002 input
+  capacitance split, LED current within 2 to 5 mA across 4.75 to 5.25 V, no back-feed from ISP to VBUS).
+- **Three domains found the D1 problem independently** (power and protection as major, BOM as minor),
+  each with its own citations and ngspice measurements (for example V(VCC) = 3.83 V at VBUS = 4.75 V).
+  It is the same problem the models agent and the builder loop found.
+- **New findings not seen before:** the ISP MOSI and MISO lines double as LED cathodes, so a programmer
+  must sink about 4.5 mA through an LED; VCC sits about 0.9 V below VBUS, so a fixed-5 V programmer
+  drives the MCU's pins above its rail; a 100 mA-hold PTC cannot enforce the SPEC's strict below-100 mA
+  USB ceiling, because faults between hold and trip current are not cleared.
+- **Open questions** ask for what only a person or a document can settle: which ISP programmer, the
+  ATtiny84A and every other datasheet (every MPN on the BOM is marked UNVERIFIED), F1's hold rating,
+  ESD on VBUS and CC.
+- **All 8 rejections were our tool, not the agents:** current through a part modelled as a subcircuit
+  (F1, D1) or through a current source (the MCU stand-in) cannot be probed by part name. The reviewers
+  went around it by measuring node voltages.
+
+Checked from the logs, not the agents' summaries: every one of the 89 proposals carries a subagent's
+domain, so the orchestrator proposed nothing; a replay of the log through the verifiers with no model
+reproduces every decision and the report byte for byte (16,635 characters). The findings' wording is the
+proposer's and is labelled so; only their premises are verified. About $2 of model usage. The review's
+files are outside the repository with the board (`gate-a/review/qo/`).
+
 ### Speed
 
 A full mutation run of 54 mutants takes about 3.3 seconds on the development container. The project's first gate allows 10 minutes per board, so electrical mutation testing is cheap. Finite-element runs will not be: 50 mutants at three minutes each is about 2.5 hours. That is where parallel compute becomes worth paying for.
