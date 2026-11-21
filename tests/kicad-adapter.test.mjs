@@ -433,3 +433,15 @@ describe('check net names and aliases', () => {
     assert.throws(() => validateSidecar({ version: 1, aliases: [{ name: '+5V', net: 'VIN' }] }), AdapterError);
   });
 });
+
+test('a model file may set initial conditions inside its own subcircuits, never on the design', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kinux-ic-'));
+  writeFileSync(join(dir, 'ok.lib'), '.subckt BLK a b\nR1 a q 1k\nC1 q b 1n\n.ic v(q) 0\n.nodeset v(q)=0\n.ends BLK\n');
+  writeFileSync(join(dir, 'top.lib'), '.subckt BLK a b\nR1 a b 1k\n.ends BLK\n.ic v(out) 5\n');
+  const ok = loadModelFile(dir, 'ok.lib');
+  assert.equal(ok.ok, true, ok.detail);
+  assert.match(ok.text, /\.ic v\(q\) 0/);
+  const top = loadModelFile(dir, 'top.lib');
+  assert.equal(top.ok, false);
+  assert.match(top.detail, /\.ic is not allowed/);
+});

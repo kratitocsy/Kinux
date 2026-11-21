@@ -340,11 +340,18 @@ export function loadModelFile(modelDir, file) {
   const models = new Set();
   const kept = [];
   const folded = raw.replace(/\r\n?/g, '\n').replace(/\n\s*\+/g, ' ').split('\n');
+  let depth = 0;
   for (const line of folded) {
     const t = line.trim();
     if (t.startsWith('.')) {
       const d = t.toLowerCase().split(/[\s(=]/)[0];
       if (d === '.end') continue;
+      if (d === '.subckt') depth += 1;
+      if (d === '.ends') depth = Math.max(0, depth - 1);
+      // `.ic`/`.nodeset` inside a subcircuit set the model's own private nodes
+      // (TI's TPS5430 model has three) and are part of its definition. At the
+      // top level of a model file they would set the design's nodes: refused.
+      if ((d === '.ic' || d === '.nodeset') && depth > 0) { kept.push(line); continue; }
       if (!MODEL_DIRECTIVES.has(d)) return { ok: false, code: 'netlist_unsupported', detail: `model "${file}": directive ${d} is not allowed inside a model file` };
       const toks = t.split(/\s+/);
       if (d === '.subckt') subckts.set(toks[1]?.toLowerCase(), toks.slice(2).filter(x => !x.includes('=') && x.toLowerCase() !== 'params:').length);
