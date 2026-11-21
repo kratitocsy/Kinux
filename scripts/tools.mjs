@@ -38,6 +38,8 @@ export const SUITES = {
   'ngspice-frequency': ['ngspice'],
   'no-model-in-verdict': [],
   'mcp': ['ngspice'],
+  'ngspice-compat': ['ngspice'],
+  'netlist-scope': ['ngspice'],
   'examples': ['ngspice'],
   'thermal': ['ngspice'],
   'live': ['ngspice'],

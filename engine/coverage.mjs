@@ -63,7 +63,7 @@
 //    by meaning. A purely numeric net name ("5") is never matched from prose.
 //    Pass {text, nets, parts} to map one explicitly.
 
-import { isGround } from './netlist.mjs';
+import { parseElement, isGround } from './netlist.mjs';
 
 export const COVERAGE_SCHEMA = 'kinux.coverage/1';
 
@@ -90,6 +90,19 @@ function flatten(netlist) {
         subckts.set(cur.name, cur);
       } else if (k === '.ends') cur = null;
     } else if (line.kind === 'element') (cur ? cur.elems : top).push(line);
+    else if (line.kind === 'subckt') {
+      // The netlist parser keeps subcircuit bodies opaque so no operator can
+      // mutate them; coverage still has to look inside to follow influence.
+      const t = line.raw.trim().split(/\s+/);
+      const k = lc(t[0]);
+      if (k === '.subckt' && !cur && t[1]) {
+        cur = { name: lc(t[1]), ports: t.slice(2).filter(x => !x.includes('=')).map(lc), elems: [] };
+        subckts.set(cur.name, cur);
+      } else if (k === '.ends') cur = null;
+      else if (cur && /^[a-z]/i.test(t[0] ?? '')) {
+        try { cur.elems.push({ ...line, kind: 'element', ...parseElement(line.raw, line.index) }); } catch { /* an unparseable inner line conducts nothing we can see */ }
+      }
+    }
   }
 
   const parts = [];

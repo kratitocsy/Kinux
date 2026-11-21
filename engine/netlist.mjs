@@ -94,7 +94,7 @@ const classify = text => {
   return 'element';
 };
 
-function parseElement(raw, lineNo) {
+export function parseElement(raw, lineNo) {
   const tokens = raw.trim().split(/\s+/);
   const refdes = tokens[0];
   const type = refdes[0].toUpperCase();
@@ -104,7 +104,10 @@ function parseElement(raw, lineNo) {
     nodes = tokens.slice(1, -1);
     tail = tokens.slice(-1);
   } else {
-    const n = NODE_COUNT[type] ?? DEFAULT_NODE_COUNT;
+    // Behavioural E/G sources (`E1 out 0 VALUE={...}`, `G1 a b TABLE {...} = ...`)
+    // have two nodes; the linear form has four.
+    const behavioural = (type === 'E' || type === 'G') && /^(value|table)\b/i.test(tokens[3] ?? '');
+    const n = behavioural ? 2 : (NODE_COUNT[type] ?? DEFAULT_NODE_COUNT);
     if (tokens.length < 1 + n) {
       throw new NetlistParseError(`element "${refdes}" needs ${n} nodes, found ${tokens.length - 1} tokens after the refdes`, lineNo);
     }
@@ -185,13 +188,25 @@ export function parseNetlist(text) {
   const body = trailingNewline ? text.slice(0, -eol.length) : text;
   const rawLines = body.split(eol);
 
+  // Subcircuit bodies are someone else's model (a vendor's TLC555 has 25 of
+  // them). Everything from `.subckt` to its matching `.ends` is kept verbatim as
+  // kind 'subckt': never parsed as a design component, never mutated, and its
+  // local nodes never offered as top-level nodes (K27).
+  let depth = 0;
   const lines = rawLines.map((raw, i) => {
     const base = { id: `L${i}`, index: i, raw, dirty: false, indent: (/^\s*/.exec(raw) || [''])[0] };
     if (i === 0) return { ...base, kind: 'title' };
+    const t = raw.trim().toLowerCase();
+    if (/^\.subckt\b/.test(t)) { depth += 1; return { ...base, kind: 'subckt' }; }
+    if (depth > 0) {
+      if (/^\.ends\b/.test(t)) depth -= 1;
+      return { ...base, kind: 'subckt' };
+    }
     const kind = classify(raw);
     if (kind !== 'element') return { ...base, kind };
     return { ...base, kind, ...parseElement(raw, i) };
   });
+  if (depth !== 0) throw new NetlistParseError(`${depth} .subckt block(s) are never closed with .ends`);
   return new Netlist(lines, { trailingNewline, eol });
 }
 

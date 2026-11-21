@@ -66,11 +66,14 @@ describe('open feedback loop (the fang buck structure)', () => {
     assert.equal(net(rep, 'out').via, 'measured');
 
     const t = await truth(NET, CHECKS, noOpenOnCaps);
-    for (const ref of ['R1', 'R2', 'Rfb']) {
+    for (const ref of ['R1', 'R2']) {
       const x = t.get(ref.toLowerCase());
       assert.ok(x.survived >= 3, `${ref}: expected several mutants, got ${x.mutants}`);
       assert.equal(x.killed, 0, `${ref}: the report says no check can see it; a killed mutant would prove it wrong`);
     }
+    // Rfb sits inside the converter's .subckt: a model's internals are never mutated (K27), so
+    // the engine has nothing to say about it, while coverage (above) still sees it is unreachable.
+    assert.equal(t.get('rfb'), undefined, 'no mutant may be generated inside a subcircuit');
   });
 
   test('control: once a check reads the tap, the loop is no longer dangling, and the solver kills its mutants', async () => {
