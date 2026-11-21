@@ -140,6 +140,12 @@ Good starting points. Each is one issue from STATUS section 8.
 - **Do:** run the three boards, time each, report the equivalent fraction, and write the outcome, pass or fail, in a new file, `docs/GATE-A.md`.
 - **Done when:** the numbers are measured and committed. A failed gate with honest numbers is a good result.
 
+### R28. Score a code-defined design (a possible shortcut around R8) · M
+- **Why:** `fang` lets a design be Python source and lowers it to ngspice decks and a KiCad netlist without opening a KiCad board. If that works as its README describes, real designs could reach our engine without KiCad 10 (D2). Its `servo_drive` example is close to our target demo. And a `fang` design declares requirements and benches, which are checks, so Kinux could measure how well they catch faults. `fang` answers the questions its author declared; it has no way to find the ones the author did not think of.
+- **Not yet established:** nothing of `fang` has been run (installing it was blocked by the session's permission check). Whether its decks run through our engine unchanged is unknown.
+- **Do:** with permission, install it from a copy in a throwaway environment, run `fang sim` on `rc_filter` and `servo_drive`, and feed the decks to `kinux verify`. Decide from what happens.
+- **Done when:** one `fang` design has a mutation score, or we have written down why it cannot.
+
 ## 4. Closing Phase A: the MCP server and the Villain
 
 ### R14. MCP server · L
@@ -178,7 +184,7 @@ Render what the workers already produce: recorded MuJoCo trajectories (STEPS S4.
 The plan's first whole-machine demo. Motion gives joint torque, which becomes a load on the housing in FEA, while ngspice and the thermal model give heat. The motion worker already exports `kinux.joint_load/1` for this. Chain one way and mark everything else `NOT_CHECKED`. Depends on R22.
 
 ### R22. Part and interface contract · M
-**Do this before anyone authors parts.** A schema and validator for parts, interfaces (power, mechanical, signal, thermal), budgets and requirements, with rules a schema cannot express: interface compatibility, budget roll-up, staleness propagation upward, version pinning. Add the precedence rule: requirements outrank budgets, budgets outrank constraints, constraints outrank the design, and a requirement violation is flagged for a person, never silently resolved. This is cheap now and expensive to migrate later, for the same reason the event format was frozen first.
+**Do this before anyone authors parts.** **Read `fang`'s specification first** (`openspec/specs/fang-kernel/spec.md` in `copperheadhq/fang`, Apache-2.0). It covers typed interfaces and their compatibility checks, units, explicit unknowns, provenance and impact propagation, so most of this design has been thought through once already. We have read its README and code headers, not the spec itself. A schema and validator for parts, interfaces (power, mechanical, signal, thermal), budgets and requirements, with rules a schema cannot express: interface compatibility, budget roll-up, staleness propagation upward, version pinning. Add the precedence rule: requirements outrank budgets, budgets outrank constraints, constraints outrank the design, and a requirement violation is flagged for a person, never silently resolved. This is cheap now and expensive to migrate later, for the same reason the event format was frozen first.
 
 ### R23. The slow tier at scale · L
 Finite-element runs are minutes, not milliseconds. Parallel isolated containers, the existing input-keyed cache, time budgets and stop conditions. Depends on R9. This is where rented compute earns its cost.
@@ -228,7 +234,7 @@ These cannot be settled by writing code. Until they are, the items that depend o
 1. **Real boards may be mostly unsimulatable.** Many ICs have no SPICE model, so the checkable fraction on a real board could be small. We report it honestly, but it limits how useful the score is. R3 is where we find out. One data point from the buck converter's bill of materials (read, not tested): 23 of its 24 electrical parts are discrete (10 capacitors, 4 diodes, 5 resistors, a fuse, a ferrite jumper, an inductor, a transistor), and the one IC, the TPS5430, has no model in the repository. Mostly-discrete boards look checkable apart from the controller. Mitigations: behavioural models, a focus on power and analog subcircuits, and reporting model coverage as a first-class number.
 2. **Gaming the score.** AI-written tests can aim at known operators. Hidden fault sets (phase I) are the planned answer.
 3. **Equivalent mutants** can inflate or deflate the score (R6).
-4. **Copperhead walks toward verification.** Its roadmap includes a SPICE gate. Our edge is what does not bolt on in a weekend: mutation testing, validated physics, and honest `NOT_CHECKED` reporting. A viewer and an MCP server are not an edge.
+4. **Copperhead walks toward verification.** Its roadmap includes a SPICE gate, and its `fang` toolchain already holds a requirements graph, ngspice and Xyce backends, firmware emulation and an MCP server. It has no mutation testing (we searched the whole repository). Our edge is what does not bolt on in a weekend: mutation testing, validated physics, independence from whatever built the design, and honest `NOT_CHECKED` reporting. A viewer and an MCP server are not an edge. The sharper position is to be the independent scoring layer that works on any source, KiCad or code.
 5. **Solver inputs are hostile** (R9). One missed escape in any worker undoes the trust we are building.
 6. **The proof test may fail.** The plan accepts that and says stop or pivot before the expensive phases. We should keep the open-source engine, the benchmark and a written negative result worth having either way.
 
