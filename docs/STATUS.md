@@ -319,8 +319,9 @@ Three patterns recur: code-first design languages (atopile, tscircuit, fang), MC
 | D7 | The viewer is served from the same origin as its stream, and served runs get a read-only token. | Opening CORS on a localhost server lets any web page the user visits try to read it. Without a read-only token any local process could append events to a run labelled `real`. |
 | D8 | Spans and anchored edits, not reserialising files. | Rewriting a KiCad file churns it and changes its hash for irrelevant reasons, defeating the cache and receipts. |
 | D9 | Thermal first as a lumped model, before finite elements. | It is closed-form, instant and checkable by hand, and it uses the currents ngspice already measures. |
-| D10 | Stay the verifier. We do not generate designs. | A tool that grades its own homework cannot be trusted. Generation is Copperhead's territory. |
+| D10 | Stay the verifier. We do not generate designs. **Amended 2026-11-21 by D12:** design is now in scope, on a separate side from the verifier. | A tool that grades its own homework cannot be trusted. That still holds: it is why D12 keeps the two apart. |
 | D11 | Hosted infrastructure waits until after the first gate. | The solvers are native programs, designs are private, and the real infrastructure need is isolated containers, not a web host. |
+| D12 | **Design and verify, kept apart.** The project will also design parts (actuators, electronics, TV-class parts) and assemble a machine from verified parts. The designer (human or agent) and the verifier are separate: the verdict path never imports a model or designer (ROADMAP R10), the designer does not see hidden faults or survivor details until a round closes, and the verifier does not read the designer's reasoning. *The "blind" wording is the assistant's interpretation of the founder's words; confirm or correct it.* | The founder's direction. It keeps the independence that D10 protected while allowing a designer. Open: what the designer is, a separate tool or Claude Code through MCP, and how it is kept out of the verdict path. |
 
 ## 12. Progress against the step lists
 

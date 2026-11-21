@@ -197,6 +197,17 @@ The host coding agent proposes faults through MCP (`propose_fault`, `run_faults`
 ### R17. Staleness and obligations · M
 The contract already has a `result.stale` event and the engine never emits it. When the design changes, every dependent result should be marked stale and shown that way, and a run should not be declarable "done" while a dependent check is unverified. This is what turns "parts verified, system not checked" from a sentence into something enforced.
 
+## 4b. Direction: design and verify, kept apart (D12, 2026-11-21)
+
+The founder's direction: design parts (actuators, electronics, TV-class parts), verify each one blind, then assemble the machine from verified parts. This does not change the order of attack: Gate A (real boards scored) still comes first, because everything after it rests on a measured score. What it adds, in order:
+
+1. **R14 and R16**: the MCP loop, so a designer agent and a separate Villain can run against the verifier. The loop ends when the baseline passes, nothing is stale (R17) and every survivor is killed, proven equivalent or accepted by a person, or when a round, budget or no-progress limit stops it. A stop is reported as a stop, never as a pass.
+2. **R22**: the part and interface contract, so each part carries its budgets (power, heat, torque, mass, space) and its interfaces.
+3. **R21**: the joint-actuator chain (driver electronics, motor, load), reusing the motion worker's torque export and the thermal worker's one-way coupling.
+4. **The integrator**: system checks across parts, and a roll-up that says "parts verified, system not checked" until system tests have run. A machine's verdict is never better than its weakest `NOT_CHECKED`.
+
+Open questions: what the designer is (a separate tool, or Claude Code through MCP) and how it is kept out of the verdict path.
+
 ## 5. The physics track
 
 These follow the plan's order: deterministic checks first, then the slow tier. Start after R13 unless you have spare hands.
