@@ -14,13 +14,23 @@
 //    things a check can observe; a vendor model's internal nodes are not;
 //  * output is ngspice's binary raw format.
 //
+// BEHAVIOUR, not just the suite's own analyses (--behaviour). A suite that only
+// runs operating points cannot see a capacitor at all, so every capacitor
+// mutant comes out "identical" under its analyses. That is a coverage gap, not
+// an equivalent fault: the board still behaves differently when it powers up.
+// Measured on quiet-orbit's DC-only suite: 15 of 36 survivors were capacitor
+// mutants identical under DC. So equivalence is also judged under one or more
+// behaviour analyses (e.g. a power-up transient from zero with `uic`), driven
+// by the first block's sources, and a survivor is identical only if it is
+// identical there too.
+//
 // The comparison itself is compareRuns from profile.mjs, unchanged: a survivor
 // whose every saved vector stays within 1e-6 relative of the original, in every
 // block, is solver-identical (demonstrably equivalent). Everything else is a
 // measured difference, for a person to weigh. Nothing here decides a label.
 //
 // usage: node spikes/survivors/profile-run.mjs <run-dir> --checks <checks.md>
-//          [--ngspice-compat psa] [--jobs n] [--timeout-ms n] [--out <profile.json>]
+//          [--behaviour "<analysis>" ...] [--ngspice-compat psa] [--jobs n] [--timeout-ms n] [--out <profile.json>]
 
 import { readFileSync, writeFileSync, mkdtempSync, existsSync, rmSync } from 'node:fs';
 import { execFile } from 'node:child_process';
@@ -101,11 +111,12 @@ async function solve(text, block, vectors, dir, tag, { compat, timeoutMs }) {
   try { return { run: parseBinaryRaw(readFileSync(p)) }; } finally { rmSync(p, { force: true }); }
 }
 
-export async function profileRun(runDir, checksPath, { compat = null, jobs = 1, timeoutMs = 3_600_000, log = () => {} } = {}) {
+export async function profileRun(runDir, checksPath, { compat = null, jobs = 1, timeoutMs = 3_600_000, behaviour = [], log = () => {} } = {}) {
   const designText = readFileSync(join(runDir, 'design.cir'), 'utf8');
   const report = JSON.parse(readFileSync(join(runDir, 'report.json'), 'utf8'));
   const suite = loadSuite(checksPath);
-  const blocks = suite.blocks.filter(b => b.analysis && b.kind !== 'thermal');
+  const suiteBlocks = suite.blocks.filter(b => b.analysis && b.kind !== 'thermal');
+  const blocks = [...suiteBlocks, ...behaviour.map(raw => ({ analysis: { raw }, sources: suiteBlocks[0]?.sources ?? [], behaviour: true }))];
   const nl = parseNetlist(designText);
   const mutants = new Map(generateMutants(nl).map(m => [m.mutant_id, m]));
   const survivors = report.mutants.filter(m => m.status === 'survived');
@@ -129,11 +140,14 @@ export async function profileRun(runDir, checksPath, { compat = null, jobs = 1, 
         const profile = [];
         for (const [i, b] of blocks.entries()) {
           const mut = await solve(m.text, b, observableVectors(nl, b), work, `m${k}b${i}`, { compat, timeoutMs });
-          if (base[i].error || mut.error) profile.push({ analysis: b.analysis.raw, error: base[i].error ?? mut.error });
-          else profile.push({ analysis: b.analysis.raw, ...compareRuns(base[i].run, mut.run) });
+          const tag = { analysis: b.analysis.raw, ...(b.behaviour ? { behaviour: true } : {}) };
+          if (base[i].error || mut.error) profile.push({ ...tag, error: base[i].error ?? mut.error });
+          else profile.push({ ...tag, ...compareRuns(base[i].run, mut.run) });
         }
         const usable = profile.filter(p => !p.error);
+        const suiteOnly = profile.filter(p => !p.behaviour);
         out[k] = { mutant_id: s.mutant_id, operator: s.operator, target: s.target, description: s.description,
+          identical_under_suite_analyses: suiteOnly.length > 0 && suiteOnly.every(p => !p.error && p.max_rel < IDENTICAL),
           identical_in_every_analysis: usable.length === profile.length && usable.length > 0 && usable.every(p => p.max_rel < IDENTICAL),
           max_rel: usable.length ? Math.max(...usable.map(p => p.max_rel)) : null, profile };
         log(`${s.mutant_id}: max_rel ${out[k].max_rel}`);
@@ -141,7 +155,7 @@ export async function profileRun(runDir, checksPath, { compat = null, jobs = 1, 
     };
     await Promise.all(Array.from({ length: Math.max(1, Math.min(jobs, survivors.length)) }, worker));
     return { run_id: report.run_id, design_hash: report.design_hash, identical_threshold_relative: IDENTICAL,
-      ngspice_compat: compat, blocks: blocks.map(b => b.analysis.raw), base_errors: base.filter(b => b.error).map(b => b.error),
+      ngspice_compat: compat, blocks: blocks.map(b => b.analysis.raw), behaviour_analyses: behaviour, base_errors: base.filter(b => b.error).map(b => b.error),
       survivors: out };
   } finally {
     rmSync(work, { recursive: true, force: true });
@@ -151,13 +165,15 @@ export async function profileRun(runDir, checksPath, { compat = null, jobs = 1, 
 if (resolve(process.argv[1] ?? '') === resolve(new URL(import.meta.url).pathname)) {
   const args = process.argv.slice(2);
   const flag = (name, dflt) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : dflt; };
+  const behaviour = args.flatMap((a, i) => (a === '--behaviour' ? [args[i + 1]] : []));
   const runDir = args[0];
   const checks = flag('--checks');
   if (!runDir || !checks) { console.error('usage: profile-run.mjs <run-dir> --checks <md> [--ngspice-compat psa] [--jobs n] [--out file]'); process.exit(2); }
   const result = await profileRun(runDir, checks, { compat: flag('--ngspice-compat', null), jobs: Number(flag('--jobs', 1)),
-    timeoutMs: Number(flag('--timeout-ms', 3_600_000)), log: m => process.stderr.write(`${m}\n`) });
+    timeoutMs: Number(flag('--timeout-ms', 3_600_000)), behaviour, log: m => process.stderr.write(`${m}\n`) });
   const out = flag('--out', join(runDir, 'survivor-profile.json'));
   writeFileSync(out, JSON.stringify(result, null, 1));
   const ident = result.survivors.filter(s => s.identical_in_every_analysis).length;
-  console.log(`${result.survivors.length} survivors, ${ident} solver-identical (max relative difference < ${IDENTICAL} in every block); written to ${out}`);
+  const suiteIdent = result.survivors.filter(s => s.identical_under_suite_analyses).length;
+  console.log(`${result.survivors.length} survivors: ${suiteIdent} identical under the suite's own analyses, ${ident} identical in every analysis${behaviour.length ? ` including behaviour (${behaviour.join('; ')})` : ''}; written to ${out}`);
 }
