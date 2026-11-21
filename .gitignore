@@ -4,3 +4,5 @@ node_modules/
 .venv/
 # KiCad writes a per-board UI-state file next to any board it opens (KiCad 8+)
 *.kicad_prl
+# Claude Code agent worktrees: live nested checkouts, never tracked
+.claude/worktrees/
