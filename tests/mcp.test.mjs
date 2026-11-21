@@ -173,3 +173,27 @@ test('the MCP server itself loads only Node built-ins and our own code: no model
   assert.deepEqual(external, []);
   assert.deepEqual(g.findings, []);
 });
+
+test('the server writes its own call log, one line per tool call, and pins the checks each run used', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kinux-mcp-log-'));
+  const log = join(dir, 'calls.jsonl');
+  const s = startServer(['--call-log', log, '--jobs', '2']);
+  try {
+    await initialised(s);
+    const started = (await s.call('kinux_start_run', {})).structuredContent;
+    assert.match(started.checks_hash, /^[0-9a-f]{64}$/);
+    await s.call('kinux_start_run', { force: true });
+    await s.call('kinux_cancel_run', {});
+    const lines = readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l));
+    assert.deepEqual(lines.map(l => [l.tool, l.isError]), [['kinux_start_run', false], ['kinux_start_run', true], ['kinux_cancel_run', false]]);
+    assert.deepEqual(lines[1].arguments, { force: true }, 'what the agent asked for is recorded, refused or not');
+  } finally { s.stop(); }
+});
+
+test('launch flags for vendor models are checked: only psa, and jobs within 1..64', () => {
+  for (const extra of [['--ngspice-compat', 'spice3'], ['--jobs', '0'], ['--jobs', 'x']]) {
+    let code = 0;
+    try { execFileSync(process.execPath, [SERVER, '--design', DESIGN, '--checks', WEAK, ...extra], { stdio: ['ignore', 'ignore', 'pipe'], timeout: 10_000 }); } catch (e) { code = e.status; }
+    assert.equal(code, 2, extra.join(' '));
+  }
+});

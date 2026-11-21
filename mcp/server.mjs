@@ -3,7 +3,8 @@
 //
 //   node mcp/server.mjs --design <x.cir|x.kicad_sch> --checks <checks.md>
 //                       [--sidecar <json>] [--model-dir <dir>] [--thermal-model <json>]
-//                       [--runs-dir <dir>]
+//                       [--intent <json>] [--ngspice-compat psa] [--jobs <n>] [--cache <file>]
+//                       [--runs-dir <dir>] [--call-log <file.jsonl>]
 //
 // A coding agent (Claude Code, Codex, Cursor) starts runs and reads findings
 // through these seven tools. It never edits files through Kinux and never
@@ -27,7 +28,7 @@
 import { spawn, execFile } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, mkdtempSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, mkdtempSync, mkdirSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -70,16 +71,19 @@ class ToolError extends Error {
 /** Parse launch arguments. Throws on anything missing or unknown. */
 export function parseLaunchArgs(argv) {
   const opts = {};
-  const known = new Set(['design', 'checks', 'sidecar', 'model-dir', 'thermal-model', 'runs-dir']);
+  const known = new Set(['design', 'checks', 'sidecar', 'model-dir', 'thermal-model', 'runs-dir', 'intent', 'ngspice-compat', 'jobs', 'cache', 'call-log']);
+  const literal = new Set(['ngspice-compat', 'jobs']);
   for (let i = 0; i < argv.length; i += 2) {
     const flag = argv[i];
     if (!flag?.startsWith('--') || !known.has(flag.slice(2)) || argv[i + 1] === undefined) {
       throw new Error(`unknown or incomplete argument "${flag}"`);
     }
-    opts[flag.slice(2)] = resolve(argv[i + 1]);
+    opts[flag.slice(2)] = literal.has(flag.slice(2)) ? argv[i + 1] : resolve(argv[i + 1]);
   }
   for (const req of ['design', 'checks']) if (!opts[req]) throw new Error(`--${req} is required`);
-  for (const k of ['design', 'checks', 'sidecar', 'model-dir', 'thermal-model']) {
+  if (opts['ngspice-compat'] !== undefined && opts['ngspice-compat'] !== 'psa') throw new Error('--ngspice-compat accepts only psa');
+  if (opts.jobs !== undefined && !(/^\d+$/.test(opts.jobs) && Number(opts.jobs) >= 1 && Number(opts.jobs) <= 64)) throw new Error('--jobs must be a whole number from 1 to 64');
+  for (const k of ['design', 'checks', 'sidecar', 'model-dir', 'thermal-model', 'intent']) {
     if (opts[k] && !existsSync(opts[k])) throw new Error(`--${k} ${opts[k]} does not exist`);
   }
   if (/\.kicad_sch$/i.test(opts.design) && !opts.sidecar) throw new Error('a .kicad_sch design needs --sidecar');
@@ -93,6 +97,14 @@ export function createServer(opts, { log = () => {} } = {}) {
   let latest = null;
 
   const designHash = () => createHash('sha256').update(readFileSync(opts.design)).digest('hex');
+  const checksHash = () => createHash('sha256').update(readFileSync(opts.checks)).digest('hex');
+  // The call log is the evidence of what the agent did (R14: assert on the
+  // call log, not on the agent's prose). One JSON line per tool call, written
+  // by the server, never by the agent.
+  const callLog = entry => {
+    if (!opts['call-log']) return;
+    appendFileSync(opts['call-log'], `${JSON.stringify({ ts: new Date().toISOString(), ...entry })}\n`);
+  };
 
   function pick(args = {}) {
     const id = args.run_id ?? latest;
@@ -130,8 +142,12 @@ export function createServer(opts, { log = () => {} } = {}) {
       if (opts.sidecar) args.push('--sidecar', opts.sidecar);
       if (opts['model-dir']) args.push('--model-dir', opts['model-dir']);
       if (opts['thermal-model']) args.push('--thermal-model', opts['thermal-model']);
+      if (opts.intent) args.push('--intent', opts.intent);
+      if (opts['ngspice-compat']) args.push('--ngspice-compat', opts['ngspice-compat']);
+      if (opts.jobs) args.push('--jobs', opts.jobs);
+      if (opts.cache) args.push('--cache', opts.cache);
       const child = spawn(process.execPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
-      const run = { id, out, child, state: 'running', started: Date.now(), finished: null, stderr: '', design_hash: designHash() };
+      const run = { id, out, child, state: 'running', started: Date.now(), finished: null, stderr: '', design_hash: designHash(), checks_hash: checksHash() };
       child.stderr.on('data', d => { run.stderr = (run.stderr + d).slice(-4000); });
       child.on('exit', (code, signal) => {
         run.finished = Date.now();
@@ -146,7 +162,7 @@ export function createServer(opts, { log = () => {} } = {}) {
       });
       runs.set(id, run);
       latest = id;
-      return { run_id: id, state: 'running', design_hash: run.design_hash };
+      return { run_id: id, state: 'running', design_hash: run.design_hash, checks_hash: run.checks_hash };
     },
 
     kinux_get_status: args => status(pick(args)),
@@ -227,10 +243,12 @@ export function createServer(opts, { log = () => {} } = {}) {
       try {
         const args = validateArgs(tool, params.arguments);
         const result = await tools[tool.name](args);
+        callLog({ tool: tool.name, arguments: params.arguments ?? {}, isError: false, result });
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }], structuredContent: result, isError: false };
       } catch (err) {
         if (!(err instanceof ToolError)) throw err;
         const body = { error: err.type, message: err.message, ...err.extra };
+        callLog({ tool: tool.name, arguments: params.arguments ?? {}, isError: true, result: body });
         return { content: [{ type: 'text', text: JSON.stringify(body) }], structuredContent: body, isError: true };
       }
     }
