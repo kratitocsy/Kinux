@@ -14,7 +14,7 @@ If this page and the code disagree, the code is right: please fix this page.
 - **Other physics exists as separate workers.** A lumped thermal model is wired into the engine. A MuJoCo motion worker and a CalculiX finite-element worker are each built and checked against hand calculations, but they stand alone: nothing mutation-tests them yet, and the viewer does not display their results.
 - **MCP server v0 exists** (`mcp/server.mjs`, Builder role only, seven tools, no dependencies). It has not yet been connected to a real agent client.
 - **Not built at all:** the editor extension, the relay, 3D views, the part and interface model, Villain agents, learning, hosting.
-- **Tests:** 443 tests in 28 test files, measured 2026-11-21 with ngspice 42, CalculiX 2.21, Gmsh 4.12.1, KiCad 10.0.8 and MuJoCo 4.0.1: 440 pass, 0 fail, 3 skipped (IPv6, because the container has no IPv6, and the two KiCad 7 gate tests, because KiCad 10 is installed). These counts hold in the development container. On a machine missing a solver, most of the affected suites fail rather than skip (K21).
+- **Tests:** 445 tests in 29 test files, measured 2026-11-21 with ngspice 42, CalculiX 2.21, Gmsh 4.12.1, KiCad 10.0.8 and MuJoCo 4.0.1: 442 pass, 0 fail, 3 skipped (IPv6, because the container has no IPv6, and the two KiCad 7 gate tests, because KiCad 10 is installed). These counts hold in the development container. On a machine missing a solver, most of the affected suites fail rather than skip (K21).
 
 ## 2. How the pieces fit
 

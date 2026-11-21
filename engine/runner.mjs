@@ -308,6 +308,7 @@ export async function runVerification(options) {
     provenance = 'real',
     timeoutMs,
     compat = null,
+    jobs = 1,
     useQueue = true,
     queuePath = ':memory:',
     onEvent,
@@ -365,8 +366,8 @@ export async function runVerification(options) {
 
   // Equivalents are never simulated: they must not be able to acquire a verdict.
   const executed = useQueue
-    ? await runThroughQueue(runnable, suite, { timeoutMs, compat, queuePath })
-    : await runDirectly(runnable, suite, { timeoutMs, compat });
+    ? await runThroughQueue(runnable, suite, { timeoutMs, compat, queuePath, jobs })
+    : await runDirectly(runnable, suite, { timeoutMs, compat, jobs });
 
   const byId = new Map(executed.map(e => [e.mutant_id, e]));
 
@@ -446,11 +447,22 @@ async function executeOne(mutant, suite, { timeoutMs, compat }) {
   }
 }
 
-async function runDirectly(prepared, suite, opts) {
-  const out = [];
-  for (const { mutant } of prepared) {
-    out.push({ ...(await executeOne(mutant, suite, opts)), dispatch: 'direct' });
-  }
+/**
+ * Run mutants, up to `jobs` at a time (K29). Each mutant is an independent
+ * simulation, and the caller emits events only after every outcome is in, in
+ * the mutants' original order, so concurrency changes wall time and nothing
+ * else. Outcomes are returned in input order.
+ */
+async function runDirectly(prepared, suite, { jobs = 1, ...opts } = {}) {
+  const out = new Array(prepared.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < prepared.length) {
+      const i = next++;
+      out[i] = { ...(await executeOne(prepared[i].mutant, suite, opts)), dispatch: 'direct' };
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(jobs, prepared.length) }, worker));
   return out;
 }
 
@@ -461,14 +473,14 @@ async function runDirectly(prepared, suite, opts) {
  * path. A job that the queue could not complete becomes an ERROR outcome, never
  * a kill and never a survivor.
  */
-async function runThroughQueue(prepared, suite, { timeoutMs, compat, queuePath }) {
+async function runThroughQueue(prepared, suite, { timeoutMs, compat, queuePath, jobs = 1 }) {
   if (!prepared.length) return [];
   let JobQueue, runOne;
   try {
     ({ default: JobQueue, runOne } = await import('../server/queue/queue.mjs'));
   } catch (err) {
     // No node:sqlite, or the queue is unavailable: fall back, loudly.
-    const out = await runDirectly(prepared, suite, { timeoutMs, compat });
+    const out = await runDirectly(prepared, suite, { timeoutMs, compat, jobs });
     return out.map(o => ({ ...o, dispatch: `direct (queue unavailable: ${String(err?.message ?? err)})` }));
   }
 
@@ -485,9 +497,12 @@ async function runThroughQueue(prepared, suite, { timeoutMs, compat, queuePath }
         timeoutMs: jobTimeout,
       });
     }
+    // `jobs` workers lease from the same queue; its fenced leases are what make
+    // concurrent workers safe. Order is restored by the caller, which looks
+    // outcomes up by mutant id and emits them in the original order.
     const out = [];
-    for (;;) {
-      const done = await runOne(queue, 'kinux-engine', async job => {
+    const drain = async workerId => { for (;;) {
+      const done = await runOne(queue, workerId, async job => {
         const mutant = byId.get(job.payload.mutant_id);
         return executeOne(mutant, suite, { timeoutMs, compat });
       }, { ttlMs: Math.max(5_000, jobTimeout), timeoutMs: jobTimeout });
@@ -504,7 +519,8 @@ async function runThroughQueue(prepared, suite, { timeoutMs, compat, queuePath }
           dispatch: 'queue',
         });
       }
-    }
+    } };
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(jobs, prepared.length)) }, (_, i) => drain(`kinux-engine-${i}`)));
     return out;
   } finally {
     queue.close();

@@ -57,6 +57,8 @@ export const USAGE = `kinux verify -- mutation-test a circuit's check suite
                       check is NOT_CHECKED (no_material_data).
   --no-queue          run mutants directly instead of through server/queue
   --timeout <ms>      per-simulation timeout (default 20000)
+  --jobs <n>          run up to n mutants at once (default 1); results and events
+                      are identical to --jobs 1, only wall time changes
   --ngspice-compat <m> run ngspice with -D ngbehavior=<m>; only "psa" is accepted
                       (vendor PSpice models such as TI's need it)
   --serve [port]      stream the run live over SSE while it executes, and keep
@@ -71,7 +73,7 @@ export const USAGE = `kinux verify -- mutation-test a circuit's check suite
 
 /** Parse argv into an options object. Pure, so the tests can use it. */
 export function parseArgs(argv) {
-  const out = { command: null, design: null, checks: null, out: 'kinux-run', threshold: 0.7, limit: Infinity, operators: null, runId: null, project: null, useQueue: true, timeoutMs: undefined, compat: null, json: false, quiet: false, help: false, serve: false, port: 0, thermalModel: null, sidecar: null, modelDir: null, intent: null };
+  const out = { command: null, design: null, checks: null, out: 'kinux-run', threshold: 0.7, limit: Infinity, operators: null, runId: null, project: null, useQueue: true, timeoutMs: undefined, compat: null, jobs: 1, json: false, quiet: false, help: false, serve: false, port: 0, thermalModel: null, sidecar: null, modelDir: null, intent: null };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -104,6 +106,7 @@ export function parseArgs(argv) {
       }
       case '--timeout': out.timeoutMs = Number(next()); break;
       case '--ngspice-compat': out.compat = next(); break;
+      case '--jobs': out.jobs = Number(next()); break;
       case '--json': out.json = true; break;
       case '--quiet': out.quiet = true; break;
       default:
@@ -114,6 +117,7 @@ export function parseArgs(argv) {
   out.command = rest[0] ?? null;
   out.design = rest[1] ?? null;
   if (!Number.isFinite(out.threshold) || out.threshold < 0 || out.threshold > 1) throw new Error('--threshold must be a number between 0 and 1');
+  if (!Number.isInteger(out.jobs) || out.jobs < 1 || out.jobs > 64) throw new Error('--jobs must be a whole number from 1 to 64');
   if (out.compat !== null && !COMPAT_MODES.has(out.compat)) throw new Error(`--ngspice-compat accepts only: ${[...COMPAT_MODES].join(', ')}`);
   return out;
 }
@@ -249,6 +253,7 @@ export async function main(argv, io = {}) {
       useQueue: opts.useQueue,
       timeoutMs: opts.timeoutMs,
       compat: opts.compat,
+      jobs: opts.jobs,
     });
   } catch (e) {
     err(`the run could not start: ${e.message}`);

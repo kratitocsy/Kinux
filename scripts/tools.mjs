@@ -40,6 +40,7 @@ export const SUITES = {
   'mcp': ['ngspice'],
   'ngspice-compat': ['ngspice'],
   'netlist-scope': ['ngspice'],
+  'engine-parallel': ['ngspice'],
   'examples': ['ngspice'],
   'thermal': ['ngspice'],
   'live': ['ngspice'],
