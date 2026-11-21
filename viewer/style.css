@@ -340,3 +340,33 @@ svg.strip, svg.trace, svg.ci { display: block; width: 100%; }
   .panel { max-height: none; }
   .panel-body { overflow: visible; }
 }
+
+/* ---- thermal: per-component, never a field ------------------------------ */
+.chip-ok      { color: var(--ok);  background: rgba(61,220,151,.12); }
+.chip-bad     { color: var(--bad); background: rgba(255,95,109,.14); }
+.chip-unknown { color: var(--warn); background: rgba(255,190,77,.12); border: 1px dashed rgba(255,190,77,.5); }
+
+.thermal-model { font-size: 12px; color: var(--fg-dim); margin: 4px 0 8px; line-height: 1.45; }
+.thermal-model strong { color: var(--fg); }
+.thermal-warn  { font-size: 12px; color: var(--warn); }
+.thermal-grid  { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.thermal-card  {
+  background: var(--bg-3); border: 1px solid var(--line-2); border-left: 3px solid var(--fg-faint);
+  border-radius: 6px; padding: 8px 10px; cursor: pointer;
+}
+.thermal-card.thermal-ok      { border-left-color: var(--ok); }
+.thermal-card.thermal-bad     { border-left-color: var(--bad); }
+.thermal-card.thermal-unknown { border-left-color: var(--warn); }
+.thermal-card.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
+.thermal-card:focus-visible { outline: 2px solid var(--accent); }
+.thermal-name  { font-family: var(--mono); font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+.thermal-row + .thermal-row { margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--line); }
+.thermal-q     { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--fg-faint); }
+.thermal-line  { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+.thermal-who   { font-size: 11px; color: var(--fg-faint); min-width: 92px; }
+.thermal-value { font-family: var(--mono); font-size: 18px; font-weight: 700; color: var(--fg); }
+.thermal-mutant .thermal-value { font-size: 15px; }
+.thermal-unchecked { font-size: 12px; color: var(--warn); }
+.thermal-meta  { font-family: var(--mono); font-size: 11px; color: var(--fg-dim); margin-top: 2px; }
+.thermal-delta { font-family: var(--mono); font-size: 12px; color: var(--warn); }
+.thermal-unparsed { margin-top: 8px; font-size: 12px; }

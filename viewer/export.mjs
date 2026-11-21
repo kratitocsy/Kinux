@@ -19,6 +19,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 export const BUNDLE_MODULES = [
   'dom.mjs',
   'reducer.mjs',
+  'thermal.mjs',
   'panels/log.mjs',
   'panels/design.mjs',
   'panels/instruments.mjs',

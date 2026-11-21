@@ -6,10 +6,129 @@
 //   * What we DO have is the design identity carried by the events, the
 //     artifact inventory (with hashes), and the list of design elements the
 //     run actually touched. Those are rendered.
+//   * Per-component temperatures, when a run carries thermal checks (layer
+//     "thermal"): one number per part, as the lumped model computes it, with
+//     the model named beside it. Still no FIELD: nothing between parts is drawn.
 //   * Everything else is a labelled placeholder that says what is missing.
 
 import { el, panelShell, section, kv, placeholder, shortHash } from '../dom.mjs';
 import { badgeFor } from '../reducer.mjs';
+import { thermalView } from '../thermal.mjs';
+
+const THERMAL_VERDICT_CLASS = { PASS: 'ok', FAIL: 'bad', NOT_CHECKED: 'unknown', ERROR: 'unknown' };
+const THERMAL_VERDICT_TEXT = { PASS: 'PASS', FAIL: 'FAIL', NOT_CHECKED: 'NOT CHECKED', ERROR: 'ERROR' };
+
+function thermalFmt(x, units) {
+  if (x === null || x === undefined) return '—';
+  const digits = units === 'W' ? 2 : 1;
+  return `${x.toFixed(digits)} ${units ?? ''}`.trim();
+}
+
+function thermalLimitText(row, units) {
+  const u = units ?? '';
+  if (row.op === 'between') return `between ${row.lo} and ${row.hi} ${u}`.trim();
+  return `${row.op} ${row.hi ?? row.lo} ${u}`.trim();
+}
+
+/** One line of a thermal card: baseline, and the selected mutant if any. */
+function thermalRow(row) {
+  const b = row.baseline;
+  const units = b?.units ?? row.selected?.units ?? (row.quantity === 'T' ? '°C' : 'W');
+  const label = row.quantity === 'T' ? 'Temperature' : 'Power';
+
+  const verdictChip = r => el('span', {
+    class: `chip chip-${THERMAL_VERDICT_CLASS[r.verdict] ?? 'unknown'}`,
+    'data-verdict': r.verdict,
+    text: THERMAL_VERDICT_TEXT[r.verdict] ?? r.verdict,
+  });
+
+  const value = r => (r.measured === null
+    // No number for a check that did not run: say why instead.
+    ? el('span', { class: 'thermal-unchecked', text: `not checked — ${r.reason ?? r.reason_code ?? 'no reason given'}` })
+    : el('span', { class: 'thermal-value', text: thermalFmt(r.measured, units) }));
+
+  const parts = [
+    el('div', { class: 'thermal-q', text: label }),
+    el('div', { class: 'thermal-line', 'data-testid': 'thermal-baseline' }, b ? [
+      el('span', { class: 'thermal-who', text: 'baseline' }),
+      value(b),
+      verdictChip(b),
+    ] : [el('span', { class: 'muted', text: 'no baseline result' })]),
+    el('div', { class: 'thermal-meta', text:
+      `limit ${thermalLimitText(row, units)}` + (b && b.margin !== null ? ` · margin ${thermalFmt(b.margin, units)}` : '') }),
+  ];
+
+  if (row.selected) {
+    const s = row.selected;
+    parts.push(el('div', { class: 'thermal-line thermal-mutant', 'data-testid': 'thermal-selected' }, [
+      el('span', { class: 'thermal-who', text: 'selected mutant' }),
+      value(s),
+      verdictChip(s),
+      row.delta !== null
+        ? el('span', { class: 'thermal-delta', text: `${row.delta >= 0 ? '+' : '−'}${thermalFmt(Math.abs(row.delta), units)}` })
+        : null,
+    ]));
+  }
+  return el('div', { class: 'thermal-row', 'data-test': row.test_id, 'data-quantity': row.quantity }, parts);
+}
+
+/** The per-component thermal section. Never a map, never interpolated. */
+function renderThermalSection(view, ctx, selection) {
+  const kids = [];
+
+  kids.push(el('p', { class: 'thermal-model', 'data-testid': 'thermal-model' }, [
+    el('strong', { text: 'Model: ' }),
+    view.models.length ? view.models.join('; ') : 'not stated by the solver',
+    '. One number per part from a lumped model — there is no spatial temperature field, no conduction between parts, and nothing is interpolated.',
+  ]));
+  if (view.unstatedModel > 0) {
+    kids.push(el('p', { class: 'thermal-warn', text: `${view.unstatedModel} thermal result(s) did not state their model.` }));
+  }
+  if (view.provenance && view.provenance !== 'real') {
+    kids.push(el('p', { class: 'prov-notice', 'data-testid': 'thermal-prov-notice',
+      text: `These temperatures are ${view.provenance}, not computed from a solver run.` }));
+  }
+  if (view.selectedMutant) {
+    kids.push(el('p', { class: 'muted', text: `Showing baseline and mutant ${view.selectedMutant}.` }));
+  }
+
+  const grid = el('div', { class: 'thermal-grid', 'data-testid': 'thermal-grid' });
+  for (const c of view.components) {
+    const worst = c.rows.some(r => r.baseline?.verdict === 'FAIL' || r.selected?.verdict === 'FAIL') ? 'bad'
+      : c.rows.some(r => r.baseline?.verdict === 'PASS') ? 'ok' : 'unknown';
+    const hit = selection.has(c.component);
+    grid.appendChild(el('div', {
+      class: `thermal-card thermal-${worst}${hit ? ' selected' : ''}`,
+      'data-testid': 'thermal-card',
+      'data-component': c.component,
+      'data-selected': hit ? 'true' : 'false',
+      role: 'button',
+      tabindex: '0',
+      onclick: () => ctx.onSelect && ctx.onSelect(c.component),
+    }, [
+      el('div', { class: 'thermal-name', text: c.component }),
+      ...c.rows.map(thermalRow),
+    ]));
+  }
+  kids.push(grid);
+
+  if (view.unparsed.length) {
+    kids.push(el('div', { class: 'thermal-unparsed', 'data-testid': 'thermal-unparsed' }, [
+      el('p', { class: 'muted', text: 'Thermal checks whose title does not name a part — listed, not dropped:' }),
+      el('ul', {}, view.unparsed.map(u => el('li', {}, [
+        el('code', { text: u.title ?? u.test_id }),
+        u.baseline ? ` — ${THERMAL_VERDICT_TEXT[u.baseline.verdict] ?? u.baseline.verdict}` : '',
+      ]))),
+    ]));
+  }
+
+  const badge = view.provenance
+    ? el('span', { class: `prov prov-${view.provenance} prov-compact`, 'data-testid': 'thermal-provenance', 'data-provenance': view.provenance },
+      [el('span', { class: 'prov-label', text: view.provenance.toUpperCase() })])
+    : null;
+  return section(`Thermal — per component (${view.checks} check${view.checks === 1 ? '' : 's'})`,
+    [badge, ...kids], { 'data-testid': 'thermal-section' });
+}
 
 const DESIGN_ARTIFACT_KINDS = ['schematic_svg', 'pcb_svg', 'mesh_glb', 'thermal_field', 'stress_field', 'mj_trajectory'];
 
@@ -107,15 +226,26 @@ export function renderDesignPanel(state, ctx = {}) {
     ])))));
   }
 
+  // Per-component thermal results, when the run has any. A run without thermal
+  // checks gets no section at all: the placeholder below then says so.
+  const thermal = thermalView(state, selection);
+  if (thermal) body.appendChild(renderThermalSection(thermal, ctx, selection));
+
   body.appendChild(section('Not wired yet', [
     placeholder('3D board / assembly view', [
       'No 3D solver is connected. There is no mesh, no geometry and no camera in this build.',
       'The concept render shows a 3D multi-physics studio; this viewer deliberately shows nothing in its place rather than a drawing that would be mistaken for one.',
     ], { phase: 'Phase D — Three.js scene, GLB from STEP, picking by design-graph id (STEPS S4.1).' }),
-    placeholder('Thermal field', [
-      'No thermal solver is connected. No temperature anywhere in this viewer is measured or simulated.',
-      'A coloured heat map would be a fabrication, so none is drawn.',
-    ], { phase: 'Phase D-E — per-component temperature for pass/fail.' }),
+    thermal
+      // Per-part numbers exist, but a field still does not: say exactly that.
+      ? placeholder('Thermal field (spatial)', [
+        'Per-component temperatures are wired above. A spatial field is not: the thermal model is lumped, one number per part, so there is no temperature between parts to draw.',
+        'A coloured heat map would still be a fabrication, so none is drawn.',
+      ], { phase: 'Phase D-E — conduction through board and housing (workers/fea), then a field.' })
+      : placeholder('Thermal field', [
+        'No thermal solver is connected. No temperature anywhere in this viewer is measured or simulated.',
+        'A coloured heat map would be a fabrication, so none is drawn.',
+      ], { phase: 'Phase D-E — per-component temperature for pass/fail.' }),
     placeholder('Structural FEA / stress', [
       'No FEA solver is connected (CalculiX, Gmsh). No stress number exists in this run.',
     ], { phase: 'Phase E — stage 5 and later.' }),

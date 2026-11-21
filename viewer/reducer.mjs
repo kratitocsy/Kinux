@@ -175,7 +175,11 @@ function logEntry(event) {
       refs.push(data.test_id, data.artifact_id);
       break;
     case 'test.result': {
-      const m = data.measured !== undefined ? ` ${data.measured}${data.units ? ' ' + data.units : ''}` : '';
+      // Only a check that ran has a reading. A NOT_CHECKED or ERROR that happens to
+      // carry `measured` must not print it: beside the verdict it reads as a
+      // measurement, which is exactly the misreading this project exists to prevent.
+      const ran = data.verdict === 'PASS' || data.verdict === 'FAIL';
+      const m = ran && data.measured !== undefined ? ` ${data.measured}${data.units ? ' ' + data.units : ''}` : '';
       const why = data.reason_code ? ` (${data.reason_code}${data.reason ? ': ' + data.reason : ''})` : '';
       text = `${data.verdict} — ${data.test_id} on ${data.subject}${m}${why}`;
       severity = data.verdict === 'FAIL' ? 'failure' : data.verdict === 'PASS' ? 'pass' : 'warning';
