@@ -13,7 +13,7 @@ If this page and the code disagree, the code is right: please fix this page.
 - **It has not been run on a real KiCad project.** The link from a KiCad project to a SPICE netlist is not built. The only designs so far are two small circuits written by hand. This is the biggest gap between where we are and the project's first gate.
 - **Other physics exists as separate workers.** A lumped thermal model is wired into the engine. A MuJoCo motion worker and a CalculiX finite-element worker are each built and checked against hand calculations, but they stand alone: nothing mutation-tests them yet, and the viewer does not display their results.
 - **Not built at all:** the MCP server, the editor extension, the relay, 3D views, the part and interface model, Villain agents, learning, hosting.
-- **Tests:** 422 tests in 24 test files, measured 2026-11-21 with ngspice 42, CalculiX 2.21, Gmsh 4.12.1, KiCad 10.0.8 and MuJoCo 4.0.1: 419 pass, 0 fail, 3 skipped (IPv6, because the container has no IPv6, and the two KiCad 7 gate tests, because KiCad 10 is installed). These counts hold in the development container. On a machine missing a solver, most of the affected suites fail rather than skip (K21).
+- **Tests:** 427 tests in 25 test files, measured 2026-11-21 with ngspice 42, CalculiX 2.21, Gmsh 4.12.1, KiCad 10.0.8 and MuJoCo 4.0.1: 424 pass, 0 fail, 3 skipped (IPv6, because the container has no IPv6, and the two KiCad 7 gate tests, because KiCad 10 is installed). These counts hold in the development container. On a machine missing a solver, most of the affected suites fail rather than skip (K21).
 
 ## 2. How the pieces fit
 

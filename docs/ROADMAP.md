@@ -139,6 +139,7 @@ R9 isolation  (before any third-party design runs anywhere that matters)
 ### R10. The "a model never judges" test · S
 - **Why:** "agents propose, solvers decide" is the project's central rule, and today it is a sentence. A short test can make it a build failure: walk the import graph from the verdict and scoring code and fail if it ever reaches a model SDK or an agent module. Copperhead does this and it costs about twenty lines.
 - **Done when:** the test exists and fails if you add such an import. Extend it when the MCP server lands (R14).
+- **Done (2026-11-21).** `tests/no-model-in-verdict.test.mjs` walks the import graph of 17 verdict and scoring entry points (25 files) and allows only Node built-ins, Ajv and our own code; it also rejects `require()`, computed `import()`, anything under `mcp/` or an agents folder, and a model SDK in the motion worker's Python child. Measured: adding `import OpenAI from 'openai'` to `engine/report.mjs` fails it. Extend the entry list when the MCP server lands.
 
 ### R11. Small fixes · S each
 Good starting points. Each is one issue from STATUS section 8.
