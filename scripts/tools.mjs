@@ -43,6 +43,7 @@ export const SUITES = {
   'engine-parallel': ['ngspice'],
   'engine-cache': ['ngspice'],
   'review': ['ngspice', 'kicad-cli'],
+  'design-views': ['kicad-cli'],
   'examples': ['ngspice'],
   'thermal': ['ngspice'],
   'live': ['ngspice'],
