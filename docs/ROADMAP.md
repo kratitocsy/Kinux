@@ -189,6 +189,7 @@ Good starting points. Each is one issue from STATUS section 8.
   - Ship a **verdict-interpretation contract** with it, telling the host agent that a FAIL is information to surface, not something to route around. A helpful coding agent's default reaction to a failing check is to get past it.
   - JSON-RPC alone on stdout; typed "busy" errors rather than an invisible queue; a per-tool schema version; a pinned `0.x` protocol until it settles.
 - **Done when:** it initialises against Claude Code and Codex in automated tests and against Cursor by a manual checklist, with assertions on the MCP call log rather than on the agent's prose.
+- **v0 built (2026-11-21):** `mcp/server.mjs`, the seven Builder tools from LEARNINGS, no dependencies. `tests/mcp.test.mjs` drives it as a child process over stdio with real ngspice runs: seven tools and no escape hatch, unknown arguments refused, same score as the CLI, survivors withheld until the round closes, typed busy error, cancel, stdout is JSON-RPC only, no model or MCP SDK in its import graph. **Not done:** the done-when above (no real agent client has connected yet), the Villain role (R16), live viewer serving.
 
 ### R15. Constraint registry · M
 A machine-readable list of limits (a datasheet maximum, an interface limit, a declared budget), each with an `affects` list that drives staleness. It is what lets the Villain's faults be validated without a model judging realism, which the project's own rule forbids.

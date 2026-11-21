@@ -69,7 +69,7 @@ export KINUX_PYTHON=/path/to/python-with-mujoco
 | `tests/` | One file per component. `tests/helpers/` holds shared test code and is not run on its own. |
 | `spikes/`, `docs/` | The environment probe, the plan, status and roadmap. |
 
-The folders `extension/`, `mcp/` and `relay/` are empty placeholders for work that has not started.
+`mcp/` holds the MCP server (v0, Builder role). The folders `extension/` and `relay/` are empty placeholders for work that has not started.
 
 ## 3. The rules every change follows
 

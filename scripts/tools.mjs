@@ -37,6 +37,7 @@ export const SUITES = {
   'singular-matrix': ['ngspice'],
   'ngspice-frequency': ['ngspice'],
   'no-model-in-verdict': [],
+  'mcp': ['ngspice'],
   'examples': ['ngspice'],
   'thermal': ['ngspice'],
   'live': ['ngspice'],
