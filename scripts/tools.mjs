@@ -30,6 +30,7 @@ export const SUITES = {
   'ngspice-worker': ['ngspice'],
   'ngspice-assertions': ['ngspice'],
   'engine': ['ngspice'],
+  'engine-receipt': ['ngspice'],
   'examples': ['ngspice'],
   'thermal': ['ngspice'],
   'live': ['ngspice'],

@@ -116,6 +116,7 @@ R9 isolation  (before any third-party design runs anywhere that matters)
 ### R7. Evidence receipts from the engine · S to M
 - **Why:** reports are reproducible only if they carry hashes of their inputs (K6). `server/queue/receipt.mjs` already builds receipts that validate against the schema, but the engine never calls it.
 - **Done when:** `kinux verify` writes a receipt that passes `validateReceipt`, and a test shows the receipt hash changes when the design, the checks, the operator set, the tool version or the seed changes.
+- **Status (2026-11-21): done for design, checks, operators and limit.** `kinux verify` writes `receipt.json` (`engine/receipt.mjs`, tests in `tests/engine-receipt.test.mjs`): it validates, the same inputs give the same id, and changing the design, checks, operator set or limit changes it. Not covered: a change of tool version (only ngspice 42 is available to test) and seeds (the engine has none). The limit is also folded into the operator hash, but a test cannot tell that apart from the result change it causes.
 
 ### R8. KiCad 8 or later · S once decided · Human
 - **Why:** ERC, DRC and GLB export need it, and **so does opening any modern board at all**. KiCad 7 refuses files saved by KiCad 8 or later: 18 of 19 real schematics and the one board we tried all failed (K4). That makes this the gate on R3, so the decision (D2) should be made first, not last. It also lets us check the five hand-authored report fixtures against real output.
@@ -314,3 +315,13 @@ These cannot be settled by writing code. Until they are, the items that depend o
 3. Say you are taking it, in an issue or draft pull request, so two people do not build the same thing.
 4. Good first items: R1, R10, R11, R12.
 5. When you finish, update STATUS (the component table, test counts, and the issue list) in the same change.
+
+### R39. Ideas from Copperhead's website (copperhead.sh), not yet built
+Source: an agent read their posts and the copperbench page (2026-11-21). Their benchmark has a method but no runner and no results, and their verification is KiCad ERC/DRC, which they call "a floor". They have no mutation testing. Worth adopting, cheapest first:
+- **S:** report pass^k (all repeats passed) next to the mean, with cost per passing task; an allowlist of known baseline violations ("enumerate and account") so a new type or higher count fails; a credential scan that fails a run; refusals graded on a cited source.
+- **S to M:** a comparability stamp (suite, design hash, tool versions) so records that disagree are never averaged; a build that fails if a published number does not regenerate from stored results.
+- **M:** a closed assertion vocabulary with offline re-grading from stored evidence; a deterministic failure-category classifier ranked by frequency times cost; "looks green but wrong" tasks (budget tampering, whole-file regeneration, partial rename), which our mutation operators could generate; contamination variants (renamed nets, permuted pins, scaled values); a mesh-refinement or timestep check stored with each solver verdict.
+- **Caution:** their claims of drift and respin costs ($5-50k) are unsourced, and their demo covers specification to part selection only.
+
+### R40. tscircuit as a source of test boards · S to M
+Source: an agent read its READMEs (2026-11-21); the source was not read. MIT and ISC licences on the main repo, core, autorouter, circuit-json and circuit-json-to-spice; some DRC repos have no licence and must not be copied. Code-defined boards would avoid the KiCad 8+ file problem (R28). Its SPICE converter handles only R, C and bipolar transistors and its repos are days old, so expect to write our own emitter. Treat as an input adapter, not a dependency.

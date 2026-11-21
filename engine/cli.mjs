@@ -15,6 +15,7 @@
 // invocation is in engine/README.md.
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { makeReceipt } from './receipt.mjs';
 import { join, resolve, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseSimulationBlocks } from '../workers/ngspice/assertions.mjs';
@@ -216,6 +217,10 @@ export async function main(argv, io = {}) {
   writeFileSync(paths.markdown, renderMarkdown(report), 'utf8');
   writeFileSync(paths.json, JSON.stringify(report, null, 2) + '\n', 'utf8');
   writeFileSync(paths.events, outcome.stream.toJSONL(), 'utf8');
+  paths.receipt = join(dir, 'receipt.json');
+  const receipt = makeReceipt({ outcome, report, inputs: [{ path: opts.design, text: netlist }, { path: opts.checks, text: readFileSync(opts.checks, 'utf8') }], operators, limit: opts.limit });
+  writeFileSync(paths.receipt, JSON.stringify(receipt, null, 2) + '\n', 'utf8');
+  report.receipt_id = receipt.receipt_id;
   report.written = paths;
 
   if (!opts.quiet) {
