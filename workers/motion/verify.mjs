@@ -21,16 +21,16 @@
 //   no JSON from the child                -> ERROR tool_error
 
 import { validateEvent } from '../../contracts/check-run.mjs';
+import { verdictForReason } from '../reason-codes.mjs';
 import { recordTrajectory, storeArtifact, canonicalJSON } from './run.mjs';
 import { parseMotionAssertions, measureAssertion, describeComparator } from './assertions.mjs';
 
 export const DEFAULT_REL_TOL = 0.01;
-const ERROR_CODES = new Set(['timeout', 'tool_error']);
 
-function notRun(test_id, subject, reason_code, reason, assertion) {
+export function notRun(test_id, subject, reason_code, reason, assertion) {
   const r = {
     test_id, subject,
-    verdict: ERROR_CODES.has(reason_code) ? 'ERROR' : 'NOT_CHECKED',
+    verdict: verdictForReason(reason_code, 'NOT_CHECKED'), // a missing MuJoCo is NOT_CHECKED here (K24)
     reason_code,
     reason: String(reason ?? '').slice(0, 2000),
   };

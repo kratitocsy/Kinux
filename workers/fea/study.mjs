@@ -11,18 +11,15 @@
 // The value reported is the one from the finest mesh.
 
 import { validateEvent } from '../../contracts/check-run.mjs';
+import { verdictForReason } from '../reason-codes.mjs';
 
 export const MIN_LEVELS = 3;
 
-/** Reason codes that mean "we could not check"; everything else is ERROR. */
-export const NOT_CHECKED_CODES = new Set([
-  'mesh_failed', 'mesh_not_converged', 'no_material_data', 'unsupported_contact',
-  'sim_nonconverge', 'netlist_unsupported', 'out_of_scope',
-]);
-export const ERROR_CODES = new Set(['tool_missing', 'timeout', 'tool_error']);
+// The verdict for each reason code is decided once, in workers/reason-codes.mjs (K19).
+export { NOT_CHECKED_CODES, ERROR_CODES } from '../reason-codes.mjs';
 
 export function notRun(test_id, subject, reason_code, reason) {
-  const verdict = NOT_CHECKED_CODES.has(reason_code) ? 'NOT_CHECKED' : 'ERROR';
+  const verdict = verdictForReason(reason_code, 'ERROR');
   return { test_id, subject, verdict, reason_code, reason: String(reason ?? '').slice(0, 2000) };
 }
 

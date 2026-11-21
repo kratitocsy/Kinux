@@ -142,9 +142,9 @@ R9 isolation  (before any third-party design runs anywhere that matters)
 ### R11. Small fixes · S each
 Good starting points. Each is one issue from STATUS section 8.
 - K8: `corner()` measures against the passband (also in R4).
-- K10: `3.3F` should not silently mean 3.3 femto.
+- K10: done (engine parser matches ngspice; see STATUS K10 for the one remaining grammar gap).
 - K11: make the queue "timeouts" test insensitive to machine load.
-- K19: unify how `mesh_failed` and `mesh_not_converged` map to verdicts across ngspice and FEA.
+- K19: done for the mesh codes. `tool_missing` is still split (K24), and needs a decision.
 - Corner cases found along the way: the convergence gate in the motion worker can be fooled when both timesteps are equally wrong (STATUS finding 10). At minimum, add a third timestep.
 
 ### R12. Documentation debt · S each

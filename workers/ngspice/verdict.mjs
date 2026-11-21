@@ -10,18 +10,17 @@
 // through contracts/check-run.mjs. The rules live there, not here.
 
 import { validateEvent } from '../../contracts/check-run.mjs';
+import { verdictForReason } from '../reason-codes.mjs';
 
 export const VERDICTS = { PASS: 'PASS', FAIL: 'FAIL', NOT_CHECKED: 'NOT_CHECKED', ERROR: 'ERROR' };
 
-/** Reason codes that mean "we could not check", not "the design is wrong". */
-export const NOT_CHECKED_CODES = new Set([
-  'no_model', 'blackbox', 'netlist_unsupported', 'sim_nonconverge',
-  'out_of_scope', 'no_material_data',
-]);
-export const ERROR_CODES = new Set(['tool_missing', 'timeout', 'tool_error', 'mesh_failed', 'mesh_not_converged', 'unsupported_contact']);
+// Which reason code means NOT_CHECKED and which means ERROR is decided once, in
+// workers/reason-codes.mjs, so every worker agrees (K19). ngspice treats a
+// missing tool as an ERROR.
+export { NOT_CHECKED_CODES, ERROR_CODES } from '../reason-codes.mjs';
 
 function notRun(test_id, subject, reason_code, reason) {
-  const verdict = NOT_CHECKED_CODES.has(reason_code) ? VERDICTS.NOT_CHECKED : VERDICTS.ERROR;
+  const verdict = verdictForReason(reason_code, 'ERROR');
   return { test_id, subject, verdict, reason_code, reason: String(reason ?? '').slice(0, 2000) };
 }
 

@@ -31,6 +31,8 @@ export const SUITES = {
   'ngspice-assertions': ['ngspice'],
   'engine': ['ngspice'],
   'engine-receipt': ['ngspice'],
+  'spice-number': ['ngspice'],
+  'reason-codes': [],
   'examples': ['ngspice'],
   'thermal': ['ngspice'],
   'live': ['ngspice'],
