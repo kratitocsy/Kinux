@@ -163,10 +163,54 @@ Writes `report.md`, `report.json` and `events.jsonl` into `--out`. Options:
 | `--run-id <id>`, `--project <name>` | Recorded in the stream and the report |
 | `--no-queue` | Run mutants directly instead of through the job queue |
 | `--timeout <ms>` | Per-simulation timeout (default 20000) |
+| `--serve [port]` | Stream the run live and serve the viewer; see below |
 | `--json`, `--quiet` | Print the report as JSON / print nothing |
 
 Exit codes: `0` threshold met, `1` below the threshold, `2` usage or input
 error, `3` the run produced an event stream the contract rejects.
+
+### Watching a run live
+
+```sh
+node engine/cli.mjs verify engine/fixtures/divider-rc.cir \
+  --checks engine/fixtures/checks-thorough.md --serve 7777
+```
+
+prints, before the solver starts:
+
+```
+serving run run-20261121... at http://127.0.0.1:7777
+  WATCH IT:  http://127.0.0.1:7777/viewer/index.html?sse=...
+  live SSE:  http://127.0.0.1:7777/runs/run-.../events?token=...
+  full log:  http://127.0.0.1:7777/runs/run-.../events.jsonl?token=...
+```
+
+Open **WATCH IT** and the three panels fill as ngspice runs. `engine/live.mjs`
+bridges the engine's `EventStream` into the run server (`server/run/`) through
+the `onEvent` hook, and after the run finishes the server keeps serving until
+Ctrl-C so the run can still be opened and replayed.
+
+Four properties, each with a test in `tests/live.test.mjs`:
+
+- **It is live, not a replay.** A test records how many events the engine had
+  produced at the moment a client — and, separately, a real browser — first
+  saw one, and requires the run to have still been in progress. A bridge that
+  buffered and flushed at the end fails it with *"that is a replay, not a live
+  stream"*; that sabotage was tried, and caught.
+- **The stream is a view; the file is the record.** A viewer that disconnects
+  never fails a run, so every submit is caught inside the bridge. But nothing
+  is swallowed: failures are counted, named and printed on stderr. They do not
+  change the exit code, which stays the verification's verdict.
+- **Read-only over HTTP.** A served run gets one random view token scoped to it
+  and **no drive token exists**. Without that, any local process could POST
+  events into a run labelled `real`. The engine needs no token: the bridge
+  submits in-process.
+- **Same origin, no CORS.** The server serves `viewer/` itself, so the page
+  follows its stream by a relative URL. Opening CORS on a localhost server
+  instead would let any web page the user visits try to read it.
+
+What it does not do yet: it serves one run per process, and there is no
+reconnect banner in the viewer when the server goes away.
 
 A check suite looks like this:
 

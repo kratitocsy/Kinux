@@ -15,7 +15,8 @@
 // invocation is in engine/README.md.
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join, resolve, extname } from 'node:path';
+import { join, resolve, extname, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseSimulationBlocks } from '../workers/ngspice/assertions.mjs';
 import { checkRun } from '../contracts/check-run.mjs';
 import { runVerification } from './runner.mjs';
@@ -37,6 +38,11 @@ export const USAGE = `kinux verify -- mutation-test a circuit's check suite
   --project <name>    project name recorded in the report (default: the design's filename)
   --no-queue          run mutants directly instead of through server/queue
   --timeout <ms>      per-simulation timeout (default 20000)
+  --serve [port]      stream the run live over SSE while it executes, and keep
+                      serving it afterwards so it can be watched or replayed.
+                      0 or omitted picks a free port. The run still writes its
+                      own events.jsonl: the file is the record, the stream is
+                      a view of it, and a viewer that drops never fails a run.
   --json              print the report as JSON on stdout instead of text
   --quiet             print nothing but the exit status
   -h, --help          this text
@@ -44,7 +50,7 @@ export const USAGE = `kinux verify -- mutation-test a circuit's check suite
 
 /** Parse argv into an options object. Pure, so the tests can use it. */
 export function parseArgs(argv) {
-  const out = { command: null, design: null, checks: null, out: 'kinux-run', threshold: 0.7, limit: Infinity, operators: null, runId: null, project: null, useQueue: true, timeoutMs: undefined, json: false, quiet: false, help: false };
+  const out = { command: null, design: null, checks: null, out: 'kinux-run', threshold: 0.7, limit: Infinity, operators: null, runId: null, project: null, useQueue: true, timeoutMs: undefined, json: false, quiet: false, help: false, serve: false, port: 0 };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -63,6 +69,14 @@ export function parseArgs(argv) {
       case '--run-id': out.runId = next(); break;
       case '--project': out.project = next(); break;
       case '--no-queue': out.useQueue = false; break;
+      // --serve takes an OPTIONAL port, so only consume the next argv entry
+      // when it really is one. "--serve --json" must not eat "--json".
+      case '--serve': {
+        out.serve = true;
+        const peek = argv[i + 1];
+        if (peek !== undefined && /^\d+$/.test(peek)) { out.port = Number(argv[++i]); }
+        break;
+      }
       case '--timeout': out.timeoutMs = Number(next()); break;
       case '--json': out.json = true; break;
       case '--quiet': out.quiet = true; break;
@@ -129,9 +143,40 @@ export async function main(argv, io = {}) {
   }
 
   const runId = opts.runId ?? `run-${new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14)}`;
+
+  // Start serving BEFORE the run, and print the URL first, so a viewer can be
+  // attached in time to watch the baseline go by rather than arriving at the end.
+  let live = null;
+  if (opts.serve) {
+    try {
+      const { serveRun } = await import('./live.mjs');
+      const { createRunServer } = await import('../server/run/server.mjs');
+      const { validateEvent } = await import('../contracts/check-run.mjs');
+      live = await serveRun({
+        createRunServer,
+        validate: validateEvent,
+        runId,
+        root: io.serveRoot ?? join(resolve(opts.out), 'server'),
+        port: opts.port,
+        viewerRoot: join(dirname(fileURLToPath(import.meta.url)), '..', 'viewer'),
+      });
+    } catch (e) {
+      err(`could not start the run server: ${e.message}`);
+      return 2;
+    }
+    if (!opts.quiet) {
+      log(`serving run ${runId} at ${live.base}`);
+      log(`  WATCH IT:  ${live.viewerUrl}`);
+      log(`  live SSE:  ${live.eventsUrl}`);
+      log(`  full log:  ${live.jsonlUrl}`);
+    }
+    if (io.onServe) io.onServe(live);
+  }
+
   let outcome;
   try {
     outcome = await runVerification({
+      onEvent: live ? live.bridge.sink : undefined,
       netlist,
       suite,
       operators,
@@ -144,6 +189,9 @@ export async function main(argv, io = {}) {
     });
   } catch (e) {
     err(`the run could not start: ${e.message}`);
+    // A listening server is an open handle: left alone it would keep the
+    // process alive after a failed run, which looks like a hang.
+    if (live) await live.close();
     return 2;
   }
 
@@ -177,8 +225,34 @@ export async function main(argv, io = {}) {
     }
   }
 
-  if (problems.length) return 3;
-  return report.passed_threshold ? 0 : 1;
+  const code = problems.length ? 3 : (report.passed_threshold ? 0 : 1);
+
+  if (live) {
+    // Delivery is reported, never folded into the exit code: the exit code is
+    // the verification's verdict, and a viewer that dropped does not change
+    // what the solver measured. It is printed on stderr, loudly, because a
+    // seq divergence means the engine and the server disagree about the log.
+    if (live.bridge.ok) {
+      if (!opts.quiet && !opts.json) log(`live: ${live.bridge.summary()}`);
+    } else {
+      err(`live stream INCOMPLETE: ${live.bridge.summary()}`);
+      err(`  the run itself is unaffected; ${join(resolve(opts.out), 'events.jsonl')} is the complete record`);
+    }
+
+    // Keep serving so the finished run can still be opened and replayed. main()
+    // must not return here, because the caller's process.exit() would tear the
+    // server down the instant the run ended. Tests pass holdServer: false.
+    if (io.holdServer !== false) {
+      if (!opts.quiet && !opts.json) log(`run finished; still serving ${live.base} -- Ctrl-C to stop`);
+      await new Promise(done => {
+        process.once('SIGINT', done);
+        process.once('SIGTERM', done);
+      });
+    }
+    await live.close();
+  }
+
+  return code;
 }
 
 const isMain = process.argv[1] && import.meta.url === `file://${resolve(process.argv[1])}`;

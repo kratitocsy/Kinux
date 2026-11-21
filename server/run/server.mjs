@@ -22,6 +22,20 @@ import { createServer as createHttpServer } from 'node:http';
 import { connect as netConnect } from 'node:net';
 import { RunStore, HASH_RE, assertRunId } from './store.mjs';
 import { Ingest, IngestError } from './ingest.mjs';
+import { readFileSync, statSync } from 'node:fs';
+import { resolve as resolvePath, extname, sep as pathSep } from 'node:path';
+
+/** Content types for the viewer's static files. ES modules must be served as
+ *  JavaScript or the browser refuses to execute them. */
+const VIEWER_TYPES = Object.freeze({
+  '.html': 'text/html; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+});
 
 export const SSE_RETRY_MS = 3000;
 export const DEFAULT_HEARTBEAT_MS = 15000;
@@ -281,6 +295,35 @@ export function createRunServer(opts = {}) {
   const tokens = opts.tokens instanceof TokenSet ? opts.tokens : new TokenSet(opts.tokens ?? []);
   const requireToken = opts.requireToken ?? tokens.size > 0;
   const heartbeatMs = opts.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
+  // Opt-in: a server only serves files when it is told which directory to serve.
+  const viewerRoot = opts.viewerRoot ? resolvePath(opts.viewerRoot) : null;
+
+  /** Serve one file from viewerRoot. Never escapes it, never lists it. */
+  const serveViewerAsset = (res, method, path) => {
+    let rel = path === '/viewer' || path === '/viewer/' ? 'index.html' : path.slice('/viewer/'.length);
+    try { rel = decodeURIComponent(rel); } catch { return json(res, 400, { error: 'bad path encoding' }); }
+    // Resolve, then require the result to sit strictly inside viewerRoot. This
+    // catches "..", encoded "%2e%2e", absolute paths and NUL tricks in one check
+    // rather than by enumerating bad spellings.
+    const target = resolvePath(viewerRoot, rel);
+    if (rel.includes('\0') || (target !== viewerRoot && !target.startsWith(viewerRoot + pathSep))) {
+      return json(res, 404, { error: 'not found' });
+    }
+    let body;
+    try {
+      if (!statSync(target).isFile()) return json(res, 404, { error: 'not found' });
+      body = readFileSync(target);
+    } catch {
+      return json(res, 404, { error: 'not found' });
+    }
+    res.writeHead(200, {
+      'content-type': VIEWER_TYPES[extname(target).toLowerCase()] ?? 'application/octet-stream',
+      'content-length': body.length,
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    });
+    return res.end(method === 'HEAD' ? undefined : body);
+  };
 
   const streams = new Set();
   const listeners = [];   // the http.Server instances, one per address family
@@ -297,7 +340,15 @@ export function createRunServer(opts = {}) {
     const runMatch = /^\/runs\/([^/]+)(\/events(?:\.jsonl)?)?\/?$/.exec(path);
     const runId = runMatch ? safeDecode(runMatch[1]) : null;
 
-    if (requireToken && !PUBLIC_PATHS.has(path)) {
+    // The viewer's own files are public: they are static code with no run data
+    // in them. The data still arrives over the token-gated SSE route, so making
+    // the page loadable without a token gives nothing away. GET and HEAD only --
+    // a write to a /viewer path is not a viewer request and gets the gate.
+    const isViewerAsset = viewerRoot !== null &&
+      (method === 'GET' || method === 'HEAD') &&
+      (path === '/viewer' || path.startsWith('/viewer/'));
+
+    if (requireToken && !PUBLIC_PATHS.has(path) && !isViewerAsset) {
       const verdict = tokens.verify(tokenFromRequest(req, url), { method, runId });
       if (!verdict.ok) {
         res.setHeader('cache-control', 'no-store');
@@ -311,6 +362,12 @@ export function createRunServer(opts = {}) {
       res.writeHead(204, { allow: 'GET, HEAD, POST, OPTIONS', 'content-length': 0 });
       return res.end();
     }
+
+    // GET /viewer/* -- the viewer served from the same origin as the stream, so
+    // a browser can follow /runs/:id/events without any CORS header. Opening
+    // CORS on a localhost server instead would invite any web page the user
+    // visits to try reading it.
+    if (isViewerAsset) return serveViewerAsset(res, method, path);
 
     // GET / -- 200 with a body, never a redirect (PLAN.md section 8).
     if (path === '/' && (method === 'GET' || method === 'HEAD')) {

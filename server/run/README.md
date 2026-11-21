@@ -48,6 +48,17 @@ await server.close();
 | `POST /runs` | `{"run_id": "…"}` creates an empty log. **Drive token** |
 | `POST /runs/:id/events` | ingest one event, a JSON array of them, or JSONL. **Drive token** |
 | `POST /artifacts` | store a body under its own hash. **Drive token** |
+| `GET /viewer/*` | the viewer's static files. **Only when the server was created with `viewerRoot`**, and needs no token |
+
+`GET /viewer/*` is opt-in, and exists so a browser can follow
+`/runs/:id/events` from the same origin with no CORS header. The files are
+public because they hold no run data: the data still arrives over the
+token-gated stream. GET and HEAD only — a write to a `/viewer` path is not a
+viewer request and meets the token gate. A requested path is resolved and must
+sit strictly inside `viewerRoot`, which rejects `..`, its percent-encodings,
+absolute paths and NUL in one check instead of by listing bad spellings.
+Modules are served as `text/javascript` with `nosniff`, since a browser
+refuses to execute a module served as anything else.
 
 `GET /runs/:id/events` takes two query parameters for the awkward cases:
 `?heartbeat_ms=N` overrides the heartbeat interval (`0` disables it) and
