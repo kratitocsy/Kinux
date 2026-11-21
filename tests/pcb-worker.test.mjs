@@ -271,13 +271,16 @@ test('the real kicad-cli is present and its capabilities are reported honestly',
   assert.equal(caps.glb, caps.pcb_export.includes('glb'));
 });
 
-test('asking for DRC returns NOT_CHECKED with a reason code, and is not a PASS', async () => {
+test('DRC is NOT_CHECKED with a reason code on KiCad 7, and really runs (a report, never a verdict here) on 8+', async () => {
   const caps = await capabilities();
   const r = await runDrc({ input: BOARD });
 
   if (caps.drc) {
-    // Only reachable on KiCad 8.0+, which this container does not have.
-    assert.notEqual(r.verdict, 'NOT_CHECKED');
+    // KiCad 8.0+: a real run that returns its report path. The verdict is
+    // erc-drc-report.mjs's job, so there must be none here, and certainly no PASS.
+    assert.equal(r.ok, true, r.reason);
+    assert.equal(r.verdict, undefined);
+    assert.match(r.report, /drc\.json$/);
     return;
   }
 
@@ -294,7 +297,7 @@ test('asking for DRC returns NOT_CHECKED with a reason code, and is not a PASS',
   assert.equal(r.measured, undefined);
 });
 
-test('ERC and GLB are NOT_CHECKED the same way', async () => {
+test('on KiCad 7, ERC and GLB are NOT_CHECKED the same way (skipped per capability on 8+)', async () => {
   const caps = await capabilities();
   for (const [name, r] of [['erc', await runErc({ input: BOARD })],
                            ['glb', await exportGlb({ input: BOARD, output: '/dev/null' })]]) {

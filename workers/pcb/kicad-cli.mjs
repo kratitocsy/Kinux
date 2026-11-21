@@ -5,7 +5,9 @@
 // reason - for everything it does not have. It never reports a rule check it
 // did not run.
 //
-// MEASURED on this container (kicad-cli 7.0.11, /usr/bin/kicad-cli):
+// MEASURED first on kicad-cli 7.0.11 (the table below). The development
+// container now has 10.0.8, which has `pcb drc`, `sch erc` and `pcb export glb`;
+// on 8.0+ runDrc/runErc run the real checks (runRuleCheck). On 7.x:
 //   top-level commands : fp, pcb, sch, sym, version
 //   pcb export formats : drill, dxf, gerber, gerbers, pdf, pos, step, svg
 //   sch export formats : dxf, hpgl, netlist, pdf, ps, python-bom, svg
@@ -19,7 +21,7 @@
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtempSync, existsSync, statSync } from 'node:fs';
+import { mkdtempSync, existsSync, statSync, mkdirSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -49,6 +51,30 @@ function pickByMajor(table, major) {
   let chosen = majors[0];
   for (const m of majors) if (major >= m) chosen = m;
   return table[chosen];
+}
+
+/** Where KiCad installs the global library tables it copies on first GUI start. */
+export const LIBRARY_TABLE_TEMPLATES = '/usr/share/kicad/template';
+
+/**
+ * Headless kicad-cli never creates its global library tables (Copperhead's CI
+ * notes this, and we measured it: with an empty HOME, DRC on a real board gave
+ * 29 "The current configuration does not include the footprint library ..."
+ * warnings). Those are about this machine, not the design, and they would fail
+ * every real board's baseline. So a fresh HOME gets KiCad's own template tables.
+ * Copies are never overwritten. Returns which tables are present.
+ */
+export function seedLibraryTables(home, major, templates = LIBRARY_TABLE_TEMPLATES) {
+  const out = { fp: false, sym: false, source: templates };
+  if (!home || !(major >= 8)) return out;
+  const dir = join(home, '.config', 'kicad', `${major}.0`);
+  mkdirSync(dir, { recursive: true });
+  for (const [key, name] of [['fp', 'fp-lib-table'], ['sym', 'sym-lib-table']]) {
+    const dest = join(dir, name);
+    if (!existsSync(dest) && existsSync(join(templates, name))) copyFileSync(join(templates, name), dest);
+    out[key] = existsSync(dest);
+  }
+  return out;
 }
 
 /** A writable HOME, so KiCad can write its config while headless. */
@@ -149,19 +175,59 @@ export async function unavailable(capability, opts = {}) {
 
 /**
  * Run a design-rule check. On KiCad 7 there is no `pcb drc`, so this returns
- * NOT_CHECKED. It will run the real thing once the binary is 8.0 or newer.
+ * NOT_CHECKED. On 8.0 or newer it runs the real check and returns the path of
+ * its JSON report; erc-drc-report.mjs turns that report into a verdict.
  */
 export async function runDrc({ input, ...opts } = {}) {
   const caps = await capabilities(opts);
   if (!caps.drc) return { ...(await unavailable('drc', opts)), input };
-  return runExport({ ...opts, _rawCommand: ['pcb', 'drc', input] }); // only reachable on 8.0+
+  return runRuleCheck('drc', input, caps, opts);
 }
 
 /** Electrical rule check on a schematic. Same story: KiCad 8.0 or newer only. */
 export async function runErc({ input, ...opts } = {}) {
   const caps = await capabilities(opts);
   if (!caps.erc) return { ...(await unavailable('erc', opts)), input };
-  return runExport({ ...opts, _rawCommand: ['sch', 'erc', input] });
+  return runRuleCheck('erc', input, caps, opts);
+}
+
+/**
+ * Run `kicad-cli pcb drc` or `kicad-cli sch erc` and write a JSON report into a
+ * fresh scratch directory. Errors and warnings are requested explicitly, so the
+ * report does not depend on KiCad's default severity set. This is a run, not a
+ * verdict: it returns {ok, report} or an ERROR, and never PASS.
+ * MEASURED with kicad-cli 10.0.8: both commands exist, take --format json and
+ * --output, and exit 0 when they find violations (no --exit-code-violations).
+ */
+async function runRuleCheck(kind, input, caps, { bin = DEFAULT_BIN, home, timeout = 120_000 } = {}) {
+  const check = kind;
+  if (!input || !existsSync(input)) {
+    return { check, verdict: 'ERROR', reason_code: 'tool_error', detail_code: 'input_missing',
+      reason: `input not found: ${input}`, input, tool: 'kicad-cli', version: caps.version };
+  }
+  const { env, home: h } = kicadEnv(home);
+  const seeded = seedLibraryTables(h, caps.major);
+  const dir = mkdtempSync(join(tmpdir(), `kinux-${kind}-`));
+  const report = join(dir, `${kind}.json`);
+  const args = [kind === 'drc' ? 'pcb' : 'sch', kind, '--format', 'json', '--units', 'mm',
+    '--severity-error', '--severity-warning', '--output', report, input];
+  const started = Date.now();
+  try {
+    const { stdout, stderr } = await execFileAsync(bin, args, { env, timeout });
+    if (!existsSync(report) || statSync(report).size === 0) {
+      return { check, verdict: 'ERROR', reason_code: 'tool_error', detail_code: 'report_missing',
+        reason: `kicad-cli ${kind} wrote no report`, input, tool: 'kicad-cli', version: caps.version,
+        argv: [bin, ...args], stdout, stderr };
+    }
+    return { check, ok: true, report, input, tool: 'kicad-cli', version: caps.version,
+      library_tables: seeded, argv: [bin, ...args], ms: Date.now() - started, stdout, stderr };
+  } catch (err) {
+    return { check, verdict: 'ERROR', reason_code: err.killed ? 'timeout' : 'tool_error',
+      detail_code: err.killed ? 'timeout' : 'kicad_cli_failed',
+      reason: `kicad-cli ${kind} failed: ${String(err.message ?? err).split('\n')[0]}`,
+      input, tool: 'kicad-cli', version: caps.version, argv: [bin, ...args],
+      stdout: err.stdout ?? '', stderr: err.stderr ?? '' };
+  }
 }
 
 /**
@@ -255,7 +321,3 @@ export async function exportGlb({ input, output, ...opts } = {}) {
   return exportPcb({ ...opts, input, output, format: 'glb' });
 }
 
-/** Internal: used only on 8.0+ paths, which this container cannot reach. */
-async function runExport() {
-  throw new Error('unreachable on this kicad-cli version');
-}

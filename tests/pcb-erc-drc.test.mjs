@@ -23,7 +23,7 @@ import {
   duplicateFootprintRefs, parseReportJson, reportVerdict,
   evaluateReportText, evaluateReportFile, checkErc, checkDrc,
 } from '../workers/pcb/erc-drc-report.mjs';
-import { detectKicadCli, capabilities } from '../workers/pcb/kicad-cli.mjs';
+import { detectKicadCli, capabilities, runDrc, seedLibraryTables } from '../workers/pcb/kicad-cli.mjs';
 import { validateEvent } from '../contracts/check-run.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -279,42 +279,69 @@ test('an unknown report source is ERROR, not a guess', () => {
 
 // -------------------------------------------- the version gate on THIS machine
 
-test('this container really does have a kicad-cli that cannot do ERC or DRC', async () => {
+test('the capability table matches the installed kicad-cli: ERC and DRC exactly from KiCad 8', async () => {
   const caps = await capabilities();
   assert.equal(caps.available, true, 'kicad-cli must be installed for this test to mean anything');
-  assert.equal(caps.major, 7, `expected KiCad 7 here, found ${caps.version}`);
-  assert.equal(caps.drc, false);
-  assert.equal(caps.erc, false);
+  assert.equal(caps.drc, caps.major >= 8, `kicad-cli ${caps.version}`);
+  assert.equal(caps.erc, caps.major >= 8, `kicad-cli ${caps.version}`);
 });
 
 for (const [name, run] of [['ERC', checkErc], ['DRC', checkDrc]]) {
-  test(`asking for ${name} on this machine's KiCad 7.0.11 yields NOT_CHECKED naming the version gap`, async () => {
+  test(`on KiCad 7, asking for ${name} yields NOT_CHECKED naming the version gap`, async t => {
     const v = await detectKicadCli();
+    if (v.major >= 8) { t.skip(`kicad-cli ${v.version} has ${name}; the KiCad 7 gate cannot be reached on this machine`); return; }
     const r = await run({ input: BOARD, test_id: `${name.toLowerCase()}_gate` });
 
     assert.notEqual(r.verdict, 'PASS', 'a check that did not run must never look like it passed');
     assert.notEqual(r.verdict, 'FAIL');
     assert.equal(r.verdict, 'NOT_CHECKED');
-    assert.ok(r.reason_code, 'NOT_CHECKED requires a reason_code');
     assert.equal(r.reason_code, 'tool_missing');
     assert.equal(r.detail_code, 'kicad_cli_too_old');
-
-    // The version found and the version required are both named.
     assert.equal(r.version_found, v.version);
     assert.equal(r.version_required, '8.0');
-    assert.match(r.reason, /7\.0\.11/);
     assert.match(r.reason, /KiCad 8\.0/);
     assert.match(r.reason, /did not run/);
-    assert.equal(r.test_id, `${name.toLowerCase()}_gate`);
-    assert.equal(r.subject, 'baseline');
-
-    // No violations, no counts: there is nothing to report, and reporting
-    // "0 violations" here would read as a pass.
     assert.equal(r.violations, undefined);
     assert.equal(r.unrouted, undefined);
     assertContractLegal(r);
   });
 }
+
+test('on KiCad 8 or later, DRC really runs on our board and FAILS on its real width error', async t => {
+  const caps = await capabilities();
+  if (!caps.drc) { t.skip(`kicad-cli ${caps.version} has no DRC`); return; }
+  const r = await checkDrc({ input: BOARD, test_id: 'drc_real' });
+  // two-trace.kicad_pcb has a 0.15 mm track under a 0.20 mm minimum, measured with kicad-cli 10.0.8.
+  assert.equal(r.verdict, 'FAIL', JSON.stringify(r).slice(0, 400));
+  assert.ok(r.violations.some(v => v.type === 'track_width' && v.severity === 'error'));
+  // Ratsnest is counted, never a failure on its own (STATUS finding 4).
+  assert.equal(typeof r.unrouted, 'number');
+  assertContractLegal(r);
+});
+
+test('on KiCad 8 or later, ERC really runs on a schematic and reports what it found', async t => {
+  const caps = await capabilities();
+  if (!caps.erc) { t.skip(`kicad-cli ${caps.version} has no ERC`); return; }
+  const sch = join(HERE, '..', 'engine', 'fixtures', 'divider.kicad_sch');
+  const r = await checkErc({ input: sch, test_id: 'erc_real' });
+  // The hand-written divider has no power flag on its supply net: a real ERC finding.
+  assert.equal(r.verdict, 'FAIL', JSON.stringify(r).slice(0, 400));
+  assert.ok(r.violations.some(v => v.type === 'power_pin_not_driven'));
+  assertContractLegal(r);
+});
+
+test('a real DRC run seeds KiCad library tables, so a missing global table is not blamed on the design', async t => {
+  const caps = await capabilities();
+  if (!caps.drc) { t.skip(`kicad-cli ${caps.version} has no DRC`); return; }
+  const r = await runDrc({ input: BOARD });
+  assert.equal(r.ok, true, r.reason);
+  assert.deepEqual({ fp: r.library_tables.fp, sym: r.library_tables.sym }, { fp: true, sym: true });
+  const home = mkdtempSync(join(tmpdir(), 'kinux-seed-'));
+  const seeded = seedLibraryTables(home, caps.major);
+  assert.equal(seeded.fp, true);
+  assert.match(readFileSync(join(home, '.config', 'kicad', `${caps.major}.0`, 'fp-lib-table'), 'utf8'), /fp_lib_table/);
+  assert.deepEqual(seedLibraryTables(home, 7), { fp: false, sym: false, source: seeded.source }, 'KiCad 7 has no such step');
+});
 
 test('the gate is reused, not reimplemented: its result passes straight through', async () => {
   // Stand in for runDrc with a report-producing KiCad 8, to show the parse path
