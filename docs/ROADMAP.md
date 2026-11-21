@@ -109,6 +109,7 @@ R9 isolation  (before any third-party design runs anywhere that matters)
 ### R6. Calibrate equivalent-mutant detection · M · Human
 - **Why:** Gate A requires under 30% of survivors to be equivalent, and we have never measured it (K5). The current heuristic is deliberately conservative, so it marks almost nothing equivalent, which biases scores low.
 - **Do:** a person hand-classifies about 30 survivors across the boards as equivalent or genuine (the plan puts this in week 5). Use the result to tune the heuristics, conservatively: when unsure, do not mark equivalent.
+- **Start with a plain file, not a screen.** Label survivors in a `labels.jsonl` (id, label, reason, labeller) and compute the fraction with a script. A judging queue in the viewer, modelled on Copperhead's Verification panel, is R37.
 - **Done when:** the equivalent fraction on real survivors is measured and reported with its sample size.
 
 ### R7. Evidence receipts from the engine · S to M
@@ -242,6 +243,11 @@ Our CalculiX worker returns a bare number. Run three mesh levels and report a gr
 - **Why:** Copperhead's workspace footer shows stale results, open blockers and items "without a verdict" at all times (LEARNINGS section 1). Our viewer already knows the `NOT_CHECKED` and `ERROR` counts. Stale marks and open obligations wait on R17.
 - **Do:** show "N without a verdict, N stale, N survivors" in the viewer footer on every run, beside the score.
 - **Done when:** a run with `NOT_CHECKED` results shows the count in the footer, and a test pins it. Held back with the rest of the viewer work (D7).
+
+### R37. A judging queue for survivors · M
+- **Why:** R6, Gate B and Gate C all need a person to judge items and keep the decision. Copperhead's Verification panel is a worked example: findings grouped into clusters "to judge", queue states (to judge, new, judged), a Coverage tab and a Decisions record (LEARNINGS section 5).
+- **Do:** group survivors (by operator and target), let a reviewer label each real gap, equivalent or noise with a reason, store the labels as events, and show the running equivalent fraction. It doubles as the harness for the proof test.
+- **Done when:** 30 survivors are judged in the viewer and the fraction appears with its sample size. Held back with the viewer work (D7), except that it is on the path to Gate A, so the plain-file version in R6 comes first.
 
 ## 6. Surfaces: the viewer beside the agent
 
