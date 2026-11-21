@@ -89,6 +89,7 @@ R9 isolation  (before any third-party design runs anywhere that matters)
 ### R4. Check authoring: where checks live · M
 - **Why:** a mutation score is a property of the check suite, and the plan never said where a design's checks come from. The assertion grammar exists (`## Simulation` blocks); the convention for attaching checks to a KiCad project does not. Gate B's "AI-written tests" have nothing to write into until this exists.
 - **Do:** decide the file convention (for example a checks file beside the project), how a block binds to a sheet or set of nets, and how an agent adds one. Enforce `scope:` (K9). Fix `corner()` so it measures against the passband (K8).
+- **Checks can live in the design source.** `atopile` (`assert` and equations) and `fang` (`require()`) already let a design declare its own constraints. If our grammar can read those, a design arrives with checks to score and nobody has to author a separate file.
 - **Done when:** `kinux verify <project>` finds its own checks, and a check naming a net that does not exist is refused with a clear reason.
 
 ### R5. Per-domain baseline noise · M
@@ -147,6 +148,11 @@ Good starting points. Each is one issue from STATUS section 8.
 - **Do next:** ask the `fang` authors for a supported way to write a verification deck, or use its public `lower_question`; add a peak-to-peak measure to our grammar; and try mutating the Python source, not only the SPICE text.
 - **Done when:** there is a supported way to get a deck from `fang`, and a `fang` design with several real checks has a mutation score.
 
+### R29. Tolerance corners · M
+- **Why:** single-fault testing cannot see faults that combine. In the `fang` RC filter, a 5% drift in R1 or C1 alone stays inside the band, but both together put the corner at about 1.44 kHz, outside it (`spikes/fang/`). The plan already lists tolerance corners as an operator, and `spicebridge` ships Monte Carlo and worst-case analysis, so the idea is established.
+- **Do:** add an operator that applies the worst-case combination of declared tolerances, and report it separately from single faults so the score stays interpretable.
+- **Done when:** on the RC filter, the corner operator is killed by the check while each single 5% drift still survives, matching the hand calculation.
+
 ## 4. Closing Phase A: the MCP server and the Villain
 
 ### R14. MCP server · L
@@ -155,6 +161,8 @@ Good starting points. Each is one issue from STATUS section 8.
   - Expose **outcome-level** tools: `start_run`, `get_status`, `wait_for_run` (capped near 55 seconds), `get_findings`, `open_viewer`. No file-edit tool, no raw solver tool.
   - **No partial-loop tool.** There must be no sequence of calls that skips the baseline or produces a score without it. Interactive tools for the viewer (`set_param`, `rerun_test`) are fine, but none may be able to produce a score.
   - **No tool input may turn off a safety rule.** Every optional flag such as `force` or `skip_baseline` is a way around a rail.
+  - **Take structured input, never raw solver text.** `openbench`'s ngspice MCP server accepts a validated JSON netlist and builds the deck itself, which closes the shell-command hole by construction.
+  - **Keep the tool surface small.** The open KiCad MCP server has about 35 tools, and its commercial successor needed 21 on-demand toolsets to manage 228. Copperhead ships five. We plan about five.
   - Ship a **verdict-interpretation contract** with it, telling the host agent that a FAIL is information to surface, not something to route around. A helpful coding agent's default reaction to a failing check is to get past it.
   - JSON-RPC alone on stdout; typed "busy" errors rather than an invisible queue; a per-tool schema version; a pinned `0.x` protocol until it settles.
 - **Done when:** it initialises against Claude Code and Codex in automated tests and against Cursor by a manual checklist, with assertions on the MCP call log rather than on the agent's prose.
@@ -235,7 +243,7 @@ These cannot be settled by writing code. Until they are, the items that depend o
 1. **Real boards may be mostly unsimulatable.** Many ICs have no SPICE model, so the checkable fraction on a real board could be small. We report it honestly, but it limits how useful the score is. R3 is where we find out. One data point from the buck converter's bill of materials (read, not tested): 23 of its 24 electrical parts are discrete (10 capacitors, 4 diodes, 5 resistors, a fuse, a ferrite jumper, an inductor, a transistor), and the one IC, the TPS5430, has no model in the repository. Mostly-discrete boards look checkable apart from the controller. Mitigations: behavioural models, a focus on power and analog subcircuits, and reporting model coverage as a first-class number.
 2. **Gaming the score.** AI-written tests can aim at known operators. Hidden fault sets (phase I) are the planned answer.
 3. **Equivalent mutants** can inflate or deflate the score (R6).
-4. **Copperhead walks toward verification.** Its roadmap includes a SPICE gate, and its `fang` toolchain already holds a requirements graph, ngspice and Xyce backends, firmware emulation and an MCP server. It has no mutation testing (we searched the whole repository). Our edge is what does not bolt on in a weekend: mutation testing, validated physics, independence from whatever built the design, and honest `NOT_CHECKED` reporting. A viewer and an MCP server are not an edge. The sharper position is to be the independent scoring layer that works on any source, KiCad or code.
+4. **Copperhead walks toward verification.** Its roadmap includes a SPICE gate, and its `fang` toolchain already holds a requirements graph, ngspice and Xyce backends, firmware emulation and an MCP server. It has no mutation testing (we searched the whole repository). Our edge is what does not bolt on in a weekend: mutation testing, validated physics, independence from whatever built the design, and honest `NOT_CHECKED` reporting. A viewer and an MCP server are not an edge. The sharper position is to be the independent scoring layer that works on any source, KiCad or code. The closest commercial neighbour is Konnect-EDA (Orchis.ai), which markets "design-review audits" beside 228 design tools, so someone is already selling review for agent-made boards.
 5. **Solver inputs are hostile** (R9). One missed escape in any worker undoes the trust we are building.
 6. **The proof test may fail.** The plan accepts that and says stop or pivot before the expensive phases. We should keep the open-source engine, the benchmark and a written negative result worth having either way.
 
