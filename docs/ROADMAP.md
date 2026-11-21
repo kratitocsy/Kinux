@@ -142,9 +142,10 @@ Good starting points. Each is one issue from STATUS section 8.
 
 ### R28. Score a code-defined design (a possible shortcut around R8) · M
 - **Why:** `fang` lets a design be Python source and lowers it to ngspice decks and a KiCad netlist without opening a KiCad board. If that works as its README describes, real designs could reach our engine without KiCad 10 (D2). Its `servo_drive` example is close to our target demo. And a `fang` design declares requirements and benches, which are checks, so Kinux could measure how well they catch faults. `fang` answers the questions its author declared; it has no way to find the ones the author did not think of.
-- **Not yet established:** nothing of `fang` has been run (installing it was blocked by the session's permission check). Whether its decks run through our engine unchanged is unknown.
-- **Do:** with permission, install it from a copy in a throwaway environment, run `fang sim` on `rc_filter` and `servo_drive`, and feed the decks to `kinux verify`. Decide from what happens.
-- **Done when:** one `fang` design has a mutation score, or we have written down why it cannot.
+- **Established by a spike** (`spikes/fang/`, about 40 seconds): `fang` installs with no dependencies, runs ngspice, and builds plain SPICE decks that our engine accepts once its `.control` block is dropped and its `.include` inlined. Two fang designs got a mutation score: `rc_filter` 62.5%, `buck_regulator` 27.4% (STATUS section 4). The path exists, with no KiCad involved.
+- **Limits found:** there is no supported way to get a deck out of fang (the spike wraps an internal method); only 2 of its 12 examples run a simulation; `servo_drive`, the closest to our demo, declares no question; and Kinux's grammar cannot express fang's ripple measure.
+- **Do next:** ask the `fang` authors for a supported way to write a verification deck, or use its public `lower_question`; add a peak-to-peak measure to our grammar; and try mutating the Python source, not only the SPICE text.
+- **Done when:** there is a supported way to get a deck from `fang`, and a `fang` design with several real checks has a mutation score.
 
 ## 4. Closing Phase A: the MCP server and the Villain
 
