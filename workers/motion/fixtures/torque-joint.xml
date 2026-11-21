@@ -1,0 +1,17 @@
+<!-- Torque-driven joint for the tau = I alpha hand check.
+     Gravity off. Hinge about y. Centre of mass d = 0.2 m off the axis along x,
+     m = 2 kg, I_cm about y = 0.01 kg m^2, so I = 0.01 + 2 * 0.2^2 = 0.09 kg m^2.
+     Motor with gear 5: joint torque = 5 * ctrl. ctrl = 0.9 gives tau = 4.5 N m,
+     alpha = tau / I = 50 rad/s^2. -->
+<mujoco model="torque-joint">
+  <option timestep="0.001" gravity="0 0 0" integrator="Euler"/>
+  <worldbody>
+    <body name="link">
+      <joint name="axle" type="hinge" axis="0 1 0" damping="0" armature="0"/>
+      <inertial pos="0.2 0 0" mass="2" diaginertia="0.005 0.01 0.005"/>
+    </body>
+  </worldbody>
+  <actuator>
+    <motor name="drive" joint="axle" gear="5" ctrllimited="false"/>
+  </actuator>
+</mujoco>

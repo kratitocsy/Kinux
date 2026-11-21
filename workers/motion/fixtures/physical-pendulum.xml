@@ -1,0 +1,15 @@
+<!-- Physical pendulum for the small-angle period hand check.
+     Hinge about y at the origin. Centre of mass d = 0.5 m below the pivot,
+     m = 1 kg, I_cm about the hinge axis = 1/12 kg m^2 (a 1 m uniform rod).
+     I_pivot = I_cm + m d^2 = 1/3 kg m^2.
+     T = 2 pi sqrt(I_pivot / (m g d)) = 2 pi sqrt((1/3) / (9.81 * 0.5)) = 1.637995 s
+     No damping, no armature, no friction, no contact. -->
+<mujoco model="physical-pendulum">
+  <option timestep="0.001" gravity="0 0 -9.81" integrator="Euler"/>
+  <worldbody>
+    <body name="rod">
+      <joint name="pivot" type="hinge" axis="0 1 0" damping="0" armature="0"/>
+      <inertial pos="0 0 -0.5" mass="1" diaginertia="0.0833333333333333 0.0833333333333333 0.0001"/>
+    </body>
+  </worldbody>
+</mujoco>

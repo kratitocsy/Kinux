@@ -1,0 +1,18 @@
+<!-- A single joint actuator lifting a horizontal arm against gravity.
+     Hinge about y; arm centre of mass 0.2 m along x; m = 1 kg.
+     Position servo (kp, kv) with a +/-80 N m force limit, acting at the joint.
+     The commanded angle steps from 0 to the control value at t_on. -->
+<mujoco model="joint-actuator">
+  <option timestep="0.001" gravity="0 0 -9.81" integrator="implicitfast"/>
+  <worldbody>
+    <body name="housing">
+      <body name="arm">
+        <joint name="shoulder" type="hinge" axis="0 -1 0" damping="0.05"/>
+        <inertial pos="0.2 0 0" mass="1" diaginertia="0.0005 0.004 0.004"/>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="servo" joint="shoulder" kp="60" kv="2.5" forcelimited="true" forcerange="-80 80"/>
+  </actuator>
+</mujoco>
