@@ -18,7 +18,7 @@ Items are numbered R1 onward so they can be claimed and referred to.
 
 | Phase | What the plan says | State today |
 |---|---|---|
-| **A** | Deterministic electrical core: formats, environment spike, `kicad-cli` checks, ngspice and trace-current checks, queue, cache, receipts, mutation engine and score, `kinux verify`, **Gate A**, then an MCP server | **Mostly built, gate not passed.** Everything is built except a way to start from a real KiCad project (K2, K3), live ERC/DRC (K4), receipts from the engine (K6), and the MCP server. Gate A needs three real boards and we have none. |
+| **A** | Deterministic electrical core: formats, environment spike, `kicad-cli` checks, ngspice and trace-current checks, queue, cache, receipts, mutation engine and score, `kinux verify`, **Gate A**, then an MCP server | **Mostly built, gate not passed.** The KiCad-to-SPICE adapter now exists (R3, no IC models yet). Still missing: live ERC/DRC (K4), receipts from the engine (K6), and the MCP server. Gate A needs three real boards and we have none. |
 | **B** | Agents and humans together, first slow physics tier | **Partly pulled forward.** Event server with live progress, replay and resume: done. Validated MuJoCo checks and four validated CalculiX slices: done. Debounce and stale marking, MCP tools, command log with actor tags: not done. OpenFOAM and OpenEMS: not started. |
 | **C** | 2D panels in coding agents | **Partly pulled forward.** Three viewer panels exist. No schematic or PCB panel, no relay, no extension, no probes. |
 | **D** | 3D and interaction | Not started. Per-part thermal cards exist, as a stand-in. |

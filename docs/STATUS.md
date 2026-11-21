@@ -9,11 +9,11 @@ If this page and the code disagree, the code is right: please fix this page.
 ## 1. The short version
 
 - **The core loop works, end to end, on a hand-written SPICE circuit.** A netlist and a set of checks go in. The engine runs the checks on the original design (the *baseline*), generates faults (*mutants*), runs the checks on each one with real ngspice, decides which faults the checks caught, and produces a score with a confidence interval and an event stream. A browser viewer shows it, live, while it runs. A full run of 54 mutants takes about 3 seconds.
-- **The scorer works, on small circuits.** A weak check suite scores clearly lower than a thorough one on the same design, and the confidence intervals do not overlap (section 4). That shows the score discriminates. It does **not** show that the score predicts design risk, or that engineers review faster with it: both are untested, and the thorough suite's 60.4% against 54 generated faults suggests a score can reflect the check author's blind spots.
+- **The scorer works, on small circuits.** A weak check suite scores clearly lower than a thorough one on the same design, and the confidence intervals do not overlap (section 4). That shows the score discriminates. It does **not** show that the score predicts design risk, or that engineers review faster with it: both are untested, and the thorough suite's 58.5% against 54 generated faults suggests a score can reflect the check author's blind spots.
 - **It has not been run on a real KiCad project.** The link from a KiCad project to a SPICE netlist is not built. The only designs so far are two small circuits written by hand. This is the biggest gap between where we are and the project's first gate.
 - **Other physics exists as separate workers.** A lumped thermal model is wired into the engine. A MuJoCo motion worker and a CalculiX finite-element worker are each built and checked against hand calculations, but they stand alone: nothing mutation-tests them yet, and the viewer does not display their results.
 - **Not built at all:** the MCP server, the editor extension, the relay, 3D views, the part and interface model, Villain agents, learning, hosting.
-- **Tests:** 341 tests in 19 test files, measured 2026-11-21 with ngspice 42, CalculiX 2.21, Gmsh 4.12.1 and KiCad 10.0.8: 326 pass, 5 fail (K25), 10 skipped (IPv6 and MuJoCo, which is not installed). These counts hold in the development container. On a machine missing a solver, most of the affected suites fail rather than skip (K21).
+- **Tests:** 409 tests in 23 test files, measured 2026-11-21 with ngspice 42, CalculiX 2.21, Gmsh 4.12.1, KiCad 10.0.8 and MuJoCo 4.0.1: 403 pass, 5 fail (K25), 1 skipped (IPv6, because the container has no IPv6). These counts hold in the development container. On a machine missing a solver, most of the affected suites fail rather than skip (K21).
 
 ## 2. How the pieces fit
 
@@ -74,20 +74,20 @@ Every number here was produced by running the code. The command to reproduce is 
 
 | Design | Suite | Mutants killed | Score | 95% interval |
 |---|---|---|---|---|
-| `engine/fixtures/divider-rc.cir` (33 mutants) | weak | 4 of 33 | **12.1%** | 4.8% to 27.3% |
-| same | thorough | 24 of 33 | **72.7%** | 55.8% to 84.9% |
+| `engine/fixtures/divider-rc.cir` (33 mutants) | weak | 2 of 31 checkable | **6.5%** | 1.8% to 20.7% |
+| same | thorough | 22 of 31 checkable | **71.0%** | 53.4% to 83.9% |
 | `examples/phase-leg-support` (6 hand-picked faults) | weak | 1 of 6 | 17% | not computed |
 | same | thorough | 6 of 6 | 100% | not computed |
 
-The intervals on the first pair do not overlap. Reproduce with `node engine/cli.mjs verify engine/fixtures/divider-rc.cir --checks engine/fixtures/checks-weak.md` (and `checks-thorough.md`).
+**These numbers changed on 2026-11-21 (K26).** They were 12.1% (4 of 33) and 72.7% (24 of 33) before the fix, because ngspice's wrong answer for an opened capacitor was being scored as a kill. The two mutants that now come back `NOT_CHECKED` are the opened bypass capacitors. The intervals on the first pair still do not overlap. Reproduce with `node engine/cli.mjs verify engine/fixtures/divider-rc.cir --checks engine/fixtures/checks-weak.md` (and `checks-thorough.md`).
 
-**What this shows, and what it does not.** It shows the scorer separates a weak suite from a thorough one on one circuit with 33 mutants. That is a sanity check of the scorer. It does not show that a high score means a safe design, or that reviewing survivors saves engineers time. The demo's own thorough suite scored 60.4% against 54 generated faults, so a score can reflect what the check's author happened to think of.
+**What this shows, and what it does not.** It shows the scorer separates a weak suite from a thorough one on one circuit with 33 mutants. That is a sanity check of the scorer. It does not show that a high score means a safe design, or that reviewing survivors saves engineers time. The demo's own thorough suite scored 58.5% against 54 generated faults, so a score can reflect what the check's author happened to think of.
 
 The weak suites are written to be weak honestly: the three nets anyone would name, with bounds that look reasonable, and no transient or AC checks. They are plausible, not sabotaged.
 
 ### The thorough suite is not as thorough as it looked
 
-The demo's thorough suite caught all 6 of the faults the author picked by hand. Against the 54 faults the engine generates from its own operators, it scores **60.4%** (32 killed of 53 checkable, interval 46.9% to 72.4%).
+The demo's thorough suite caught all 6 of the faults the author picked by hand. Against the 54 faults the engine generates from its own operators, it scores **58.5%** (31 killed of 53 checkable, interval 45.1% to 70.7%; it was 60.4% before K26 was fixed).
 
 Every mutant of `RGS`, the 10 kΩ gate pulldown, survives. That resistor exists to hold the switch off when the driver is not driving it, and no check tests that situation. The author of the checks did not think of it. The engine found it. This is the product doing its job.
 
@@ -95,7 +95,7 @@ One mutant, an open connection at the shunt resistor `RSH`, makes ngspice fail t
 
 ### Thermal checks add nothing on this circuit
 
-Thermal checks catch fault M4 (shunt 2 mΩ to 20 mΩ: 8 W against a 2 W rating, 440 °C against 125 °C). But over every mutant the engine generates, **they kill nothing the electrical suites do not already kill.** The weak suite kills 17 of 54 mutants with and without the thermal checks.
+Thermal checks catch fault M4 (shunt 2 mΩ to 20 mΩ: 8 W against a 2 W rating, 440 °C against 125 °C). But over every mutant the engine generates, **they kill nothing the electrical suites do not already kill.** The weak suite killed 17 of 54 mutants with and without the thermal checks when this was measured; after K26 it kills 12 (5 of the 17 were false kills), and the thermal checks still add nothing.
 
 The reason is specific to this circuit: every power fault also moves a voltage that some electrical check watches. The thorough suite's `V(sh) < 50m` is a power limit in disguise. This does not mean thermal checks are useless. It means this circuit is the wrong place to demonstrate them. Thermal checks should earn their keep on faults that raise temperature without moving a measured voltage.
 
@@ -144,6 +144,8 @@ Status words: **working** means it runs and is tested against real tools. **part
 | PCB worker | `workers/pcb/` | Parses `.kicad_pcb` boards. IPC-2221 trace-current check. A `kicad-cli` wrapper that refuses to pretend ERC, DRC or GLB export ran when the installed version cannot. An ERC/DRC report parser. | 17 + 20 | partial: ERC and DRC cannot run on KiCad 7 |
 | KiCad schematic reader | `workers/kicad/` | Reads `.kicad_sch` into components, labels, wires and sheets, with a source span (file, line, byte range) on everything. Derives connectivity for single flat sheets and refuses otherwise. | 32 | partial: no hierarchy |
 | Mutation engine | `engine/` | `netlist.mjs` parses SPICE. `operators.mjs` has 12 mutation operators. `runner.mjs` runs baseline first, then mutants. `equivalence.mjs`, `report.mjs` (score, interval, cap) and `cli.mjs` (`kinux verify`). | 38 | working on `.cir` files only |
+| KiCad adapter | `engine/kicad-adapter.mjs` | Runs `kicad-cli` 10 on a `.kicad_sch`, sorts every part into modelled or `not_checked` (`no_model`, `out_of_scope`), builds a runnable deck from the modelled parts only, and takes sources and model files from a sidecar. `kinux verify <x.kicad_sch> --sidecar ...`. Refuses a check that names a net the deck lacks. Measured on two real boards: 13 of 20 and 14 of 22 electrical parts modelled, but the modelled parts are the passives, so the ICs that make each board work are not in the simulated circuit. Connectivity agrees with each board's own `schematic.intent.json`. | 50 | partial: this is the K2 link, with no ICs yet |
+| Coverage-gap report | `engine/coverage.mjs`, `engine/coverage-cli.mjs` | Before any mutation runs: which nets, parts and requirements no check touches (direct, influence, dangling control). Validated against real survivors (`spikes/coverage/`): precision 9 of 15 strict (15 of 15 once the K26 false kills are discounted), recall 9 of 17. It catches the fang buck's open feedback loop and misses `RGS`, because that needs value-aware sensitivity. | 15 | working, recall is about half |
 | Live bridge | `engine/live.mjs` | Streams the engine's events into the run server while it runs. | 16 | working |
 | Job queue | `server/queue/` | Durable queue on SQLite with fenced leases and heartbeats. Retries only infrastructure failures, never a genuine FAIL. Content-addressed cache. Receipt builder. | 16 | working; receipts not yet called by the engine |
 | Run server | `server/run/` | Append-only `events.jsonl`, SSE with `Last-Event-ID` resume, byte-identical replay, view and drive tokens, and it can serve the viewer from the same origin. | 27 | working; IPv6 untested |
@@ -193,7 +195,7 @@ Things we learned by running the tools. Several change how the project has to be
    Each worker default-denies its input and contains file access to the design's own directory, with tests. Treat any new solver's input format as hostile until shown otherwise.
 3. **KiCad 7 cannot run ERC or DRC.** Ubuntu's `kicad-cli` is 7.0.11, which has only `export` commands. ERC, DRC and GLB export arrived in KiCad 8. Those checks return `NOT_CHECKED` here, naming the version gap.
 4. **KiCad reports unrouted connections as errors.** DRC `unconnected_items` carry `"severity": "error"` but are just ratsnest, not defects. Treating them as failures would fail every real board's baseline, and then no mutant could be scored. Findings confined to a single footprint get similar treatment, with exceptions that matter (shorts, duplicated references, unverified footprints still fail).
-5. **Hand-picked faults overstate quality.** The demo's thorough suite looked complete against six faults chosen by its author and scored 60.4% against the engine's 54. The gap is the product's reason to exist.
+5. **Hand-picked faults overstate quality.** The demo's thorough suite looked complete against six faults chosen by its author and scored 58.5% against the engine's 54. The gap is the product's reason to exist.
 6. **Copperhead's SPICE module could never have worked.** We borrowed its assertion grammar (see section 10). It emitted `.meas op ...`, which ngspice rejects; `i(R5)` for resistors, which ngspice cannot resolve; and a margin expression that cannot reference another measurement. We kept the grammar and rewrote the compiler. Reading code was not enough; only running the real binary exposed it.
 7. **KiCad labels connect by name, not only by touch.** Copperhead's net model fragmented nets for that reason. Ours merges by name after the geometric pass.
 8. **Exported SVGs carry a wall-clock timestamp**, so the same board hashes differently each run. This does not affect the input-keyed cache but defeats storing artifacts by content hash until the timestamp is normalised.
@@ -235,6 +237,8 @@ Numbered so they can be referred to. Items marked **gap** block a roadmap goal.
 | K23 | **Datasheet sources in the thermal model are bare strings that nothing verifies**, so an invented thermal resistance would pass. A model that says `datasheet:` today could be wrong or made up. See R33. | gap |
 | K24 | **`tool_missing` has no single verdict.** ngspice and FEA return ERROR; motion and the PCB worker return NOT_CHECKED. Both are non-pass and non-kill, but the engine records them as different mutant statuses (`error` vs `not_checked`). Each worker states its choice explicitly through `verdictForReason`. Needs a decision. | decision |
 | K25 | **Five PCB tests assume KiCad 7 and fail on KiCad 10.** The environment setup script now installs KiCad 10.0.8, which has ERC, DRC and GLB export. Tests 177, 178, 179, 193 and 194 in `pcb-worker` and `pcb-erc-drc` assert the version gap ("expected KiCad 7 here, found 10.0.8"). The workers' live ERC and DRC path is still unwired, and K4 is changed: modern boards now open. Not yet re-measured. | bug, stale tests |
+| K26 | **Fixed.** ngspice 42 exits 0 after "Warning: singular matrix" and prints a wrong solution for the whole circuit: with one terminal of a bypass capacitor opened, a 5 V source read back as `v(vcc) = 0`. The engine scored that as a kill. `workers/ngspice/run.mjs` now treats a singular-matrix run as failed (`sim_nonconverge`, so NOT_CHECKED, never a kill). Measured effect: divider-rc weak 12.1% to 6.5%, thorough 72.7% to 71.0%; phase-leg weak 32.1% to 25.0%, thorough 60.4% to 58.5%. `tests/singular-matrix.test.mjs` fails without the fix. Found by the coverage-gap work. | fixed |
+| K27 | **`output_short` can land inside a `.subckt`.** `engine/operators.mjs` inserts the short after the last component in the file, and the netlist parser has no notion of subcircuit scope. In the `fang` buck deck that component is inside `.subckt ideal_buck`, so the "short" is on a local node and does nothing: a check on V(5) still passes with node 5 "shorted". Nodes inside subcircuits are also offered as candidates at top level. Not fixed: it needs a scope-aware parser. Until then, mutants of designs with subcircuits are unreliable for this operator. | gap |
 
 ## 9. In flight right now
 
