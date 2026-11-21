@@ -6,9 +6,32 @@ First audience: robotics and physical-AI engineers who design their own actuator
 
 A workspace where AI agents and engineers design hardware and machines together, and independent physics solvers check the results. The IDE is the long-term form. We start with a viewer and an extension that runs inside editors people already use, and only consider a standalone IDE once real users need one.
 
-> **Status: just started.** The shared event, manifest and receipt formats and their tests exist (`contracts/`, `npm test`). There are no solvers, workers, viewer or MCP server yet, and the sample run is synthetic. Everything else below describes what we intend to build and the order we intend to build it in. Nothing here has been proven.
+> **Status: early, and the core loop runs.** A mutation-testing engine, real ngspice, thermal, motion (MuJoCo) and finite-element (CalculiX) workers, a live run server and a browser viewer all exist, with 312 tests against the real tools. What has **not** happened: it has never run on a real KiCad board, there is no MCP server or editor extension yet, and the idea has not been tested with hardware engineers. Everything beyond the engine below is still intent.
 
-The full plan is in [docs/PLAN.md](docs/PLAN.md): architecture, physics checks, the Villain loop, graph learning, the panels, the staged build, the proof test and its gates, and the risks.
+**First measured result**, on one hand-written circuit: a weak check suite scores 12.1% and a thorough one 72.7%, and the 95% intervals do not overlap. That is the central claim, shown once, on a small circuit. It is not yet shown on real hardware.
+
+## Where to look
+
+| If you want | Read |
+|---|---|
+| What exists today, what was measured, known issues | [docs/STATUS.md](docs/STATUS.md) |
+| What to build next, and what is blocked | [docs/ROADMAP.md](docs/ROADMAP.md) |
+| How to set up and contribute | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| The full plan and the reasoning | [docs/PLAN.md](docs/PLAN.md) |
+
+The plan covers architecture, physics checks, the Villain loop, graph learning, the panels, the staged build, the proof test and its gates, and the risks. It was written before the work started; where it disagrees with STATUS or ROADMAP, those two are right.
+
+## Try it
+
+You need Node 22 and ngspice (setup in [CONTRIBUTING.md](CONTRIBUTING.md)):
+
+```bash
+npm ci && npm test
+node engine/cli.mjs verify examples/phase-leg-support/phase-leg-support.cir \
+  --checks examples/phase-leg-support/checks-thorough.md --serve 7777
+```
+
+It prints a link; open it to watch the mutation run fill in the panels live.
 
 ## The problem
 
@@ -35,12 +58,14 @@ AI models can now draft schematics, board layouts, enclosures and firmware from 
 
 | Stage | What | Status |
 |---|---|---|
-| 0 | Shared event and artifact formats, a sample 48V BLDC motor-driver project, one honestly labelled recorded run | formats, sample run and tests done; board not yet chosen |
-| 1 | Static viewer with all panels, fed by the recorded run | not started |
-| 2 | Run server, job queue, real ngspice and `kicad-cli` workers, first mutation runner | not started |
+| 0 | Shared event and artifact formats, a sample 48V BLDC motor-driver project, one honestly labelled recorded run | formats and tests done; a demo circuit stands in for the board, which is not yet chosen |
+| 1 | Static viewer with all panels, fed by the recorded run | partly done: 3 of 6 panels, live and offline export work |
+| 2 | Run server, job queue, real ngspice and `kicad-cli` workers, first mutation runner | mostly done; ERC/DRC cannot run on the KiCad 7 available here |
 | 3 | Relay, MCP server, VS Code-family extension, tests against Claude Code, Codex and Cursor | not started |
-| 4 | 3D board and enclosure, heat overlay, MuJoCo playback, select and highlight | not started |
+| 4 | 3D board and enclosure, heat overlay, MuJoCo playback, select and highlight | not started; per-part thermal numbers exist and the MuJoCo and CalculiX workers are built, but not shown in the viewer |
 | later | Fluid, electromagnetic and structural analysis, hand edits, AI-generated faults, 3D-printer export, a multi-model IDE | not started |
+
+The next step is the one the first gate needs: running on real KiCad boards. [docs/ROADMAP.md](docs/ROADMAP.md) has the order and what is blocked.
 
 In parallel with these stages, a proof test: about 10 public KiCad boards with blind-seeded bugs, and 6 to 8 hardware engineers reviewing with and without the report. If it doesn't show a clear benefit, we stop or change direction.
 

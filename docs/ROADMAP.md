@@ -1,0 +1,226 @@
+# Roadmap
+
+**Updated 2026-11-21.** Read [STATUS.md](STATUS.md) first: it says what exists today, and its issue numbers (K1, K2, ...) are referred to here. The long-form plan, with the reasoning behind the phases, is [PLAN.md](PLAN.md). The detailed step lists are [STEPS.md](STEPS.md).
+
+This page is the working order of attack. It changes as we learn things, so treat dates as targets and sizes as guesses.
+
+**How to read an item**
+
+- **Size:** **S** is a day or less for one person or agent. **M** is a few days. **L** is a week or more. These are guesses. The plan's own hour estimates are planning figures, not measurements.
+- **Human:** the item needs a decision or an action that code cannot make. Those are collected in section 9.
+- **Done when:** a check anyone can run. If you cannot tell whether an item is done, the item is badly written. Please fix it.
+
+Items are numbered R1 onward so they can be claimed and referred to.
+
+## 1. Where we are against the plan's phases
+
+[PLAN.md](PLAN.md) section 9 defines phases A to M. The honest picture:
+
+| Phase | What the plan says | State today |
+|---|---|---|
+| **A** | Deterministic electrical core: formats, environment spike, `kicad-cli` checks, ngspice and trace-current checks, queue, cache, receipts, mutation engine and score, `kinux verify`, **Gate A**, then an MCP server | **Mostly built, gate not passed.** Everything is built except a way to start from a real KiCad project (K2, K3), live ERC/DRC (K4), receipts from the engine (K6), and the MCP server. Gate A needs three real boards and we have none. |
+| **B** | Agents and humans together, first slow physics tier | **Partly pulled forward.** Event server with live progress, replay and resume: done. Validated MuJoCo checks and four validated CalculiX slices: done. Debounce and stale marking, MCP tools, command log with actor tags: not done. OpenFOAM and OpenEMS: not started. |
+| **C** | 2D panels in coding agents | **Partly pulled forward.** Three viewer panels exist. No schematic or PCB panel, no relay, no extension, no probes. |
+| **D** | 3D and interaction | Not started. Per-part thermal cards exist, as a stand-in. |
+| **E** | Heavy physics on real assemblies | Not started. |
+| **F** | Machines part by part | Not started. No part or interface schema yet. |
+| **G** | Learning | Not started. Run logs are training-friendly by design. |
+| **H to M** | Hand edits, multi-model, fabrication, IDE, registry, hosting | Not started. |
+
+**The order drifted, deliberately.** The viewer and run server (phases B and C) were built before Gate A's inputs existed, so that there would be a working end-to-end picture early. That was a reasonable choice and it produced the measured result in STATUS section 4. But it means the next work should **return to Gate A**, not keep extending the surfaces.
+
+## 2. The gates
+
+Dates come from [PLAN.md](PLAN.md) section 10 and assume week 1 starts **Monday 23 November**. That date is **not confirmed** (see D5).
+
+| Gate | Date | Pass condition | Where we stand |
+|---|---|---|---|
+| **A** | Fri 11 Dec | Scoring runs end to end on 3 boards in under 10 minutes each, with under 30% of survivors equivalent | Scoring runs end to end in about 3 seconds, on **two hand-written circuits and no real boards**. The equivalent fraction has never been measured against real survivors. **Not passed.** Blockers: R2, R3, R4, R6. |
+| **B** | Fri 15 Jan | At least 60% of seeded bugs flagged on 10 boards, false alarms at most 30%. Under 40%: drop the scoring claim | Not started. Needs the proof-test materials (R27). |
+| **C** | Fri 5 Feb | Review time down at least 25% with no loss in bugs found, and at least 5 of 8 engineers would use it | Not started. |
+| **Money** | Fri 12 Feb | Two teams agree to a paid pilot or sign a letter of intent, otherwise it stays open source | Not started. |
+
+If Gate B passes and C fails, the plan pivots to audit reports or integration into other tools. If B fails, the plan stops: the benchmark, the open-source engine and a written negative result remain. We should design the work so those outcomes are still worth having.
+
+## 3. Critical path to Gate A
+
+Do these in roughly this order. R1, R10, R11 and R12 are independent and can run in parallel with everything else.
+
+```
+R2 choose boards (human) ──┐
+                           ├──► R3 KiCad → netlist ──► R4 check authoring ──► R5 baseline noise ──► R6 equivalence ──► R13 Gate A run
+R8 KiCad 8+ (human) ───────┘                              │
+                                                          └──► R7 receipts
+R1 CI · R10 import-graph test · R11 small fixes · R12 docs debt   (any time)
+R9 isolation  (before any third-party design runs anywhere that matters)
+```
+
+### R1. Continuous integration · S
+- **Why:** 312 tests and nothing runs them on a push (K7). And a contributor without every solver installed sees failures instead of an explanation (K21).
+- **Do:**
+  - Add a shared helper that reports whether a tool is present, like the one browser tests now use (`tests/helpers/browser.mjs`), and make each solver's tests **skip with a printed reason** when it is missing. Today only the motion and browser tests do. The `engine` suite does not run at all without ngspice.
+  - Then a GitHub Action that installs ngspice, CalculiX and Gmsh, runs `npm ci` and `npm test`, with a smaller toolset still giving a green run.
+  - While there, make the tool locations configurable for every worker, `kicad-cli` included (K22).
+- **Done when:** a push shows a green or red check, the README carries the badge, and `npm test` on a machine with only Node reports skips with reasons rather than failures.
+
+### R2. Choose and licence-check three real boards · S · Human
+- **Why:** Gate A needs three real boards, and so does everything after it (STEPS S0.3). We have none.
+- **Do:** pick one open 48 V BLDC driver board and two fallbacks, as the plan describes. Each needs KiCad source, a permissive or usable licence, no non-commercial terms, and a way to get a 3D model. Write `examples/<board>/LICENSE-AUDIT.md`. An agent can research candidates; a person signs off.
+- **Done when:** the founder has approved three boards in writing.
+
+### R3. KiCad project to SPICE netlist · L
+- **Why:** the engine only reads a hand-written `.cir` (K2). This is the biggest gap to Gate A, and probably the biggest unknown in the project.
+- **Do:**
+  - Call `kicad-cli sch export netlist --format spice`. The 7.0.11 help lists `spice` as a format; nothing has tried it yet.
+  - Prefer `kicad-cli` over our own `workers/kicad` reader for connectivity, since the reader refuses hierarchy (K3). Keep the reader for source spans, so a finding can name the exact lines it came from.
+  - Report symbols with no SPICE model as `NOT_CHECKED` with `no_model`, never as a pass.
+  - Try it on the three boards and on the 19 real schematics in Copperhead's `manual-tests/` (see STATUS section 10).
+- **Done when:** `kinux verify` accepts a KiCad project, and the fraction of real designs that yield a runnable netlist is **measured and written down**.
+- **Risk to watch:** real boards are full of ICs with no SPICE model. The checkable fraction on a real board could be low. Honest reporting handles that correctly, but it affects how useful the score is, and we should find out early.
+
+### R4. Check authoring: where checks live · M
+- **Why:** a mutation score is a property of the check suite, and the plan never said where a design's checks come from. The assertion grammar exists (`## Simulation` blocks); the convention for attaching checks to a KiCad project does not. Gate B's "AI-written tests" have nothing to write into until this exists.
+- **Do:** decide the file convention (for example a checks file beside the project), how a block binds to a sheet or set of nets, and how an agent adds one. Enforce `scope:` (K9). Fix `corner()` so it measures against the passband (K8).
+- **Done when:** `kinux verify <project>` finds its own checks, and a check naming a net that does not exist is refused with a clear reason.
+
+### R5. Per-domain baseline noise · M
+- **Why:** KiCad DRC has findings that are reported but must never fail a baseline (unrouted ratsnest, single-footprint findings). Every other solver has its own equivalent: ngspice convergence warnings, mesh failures, contact noise. Without a "reported, never a failure" class for each, real baselines fail and every mutant becomes unscoreable.
+- **Done when:** each wired solver documents its noise class, with a test that the exceptions still fail (as the DRC parser's do).
+
+### R6. Calibrate equivalent-mutant detection · M · Human
+- **Why:** Gate A requires under 30% of survivors to be equivalent, and we have never measured it (K5). The current heuristic is deliberately conservative, so it marks almost nothing equivalent, which biases scores low.
+- **Do:** a person hand-classifies about 30 survivors across the boards as equivalent or genuine (the plan puts this in week 5). Use the result to tune the heuristics, conservatively: when unsure, do not mark equivalent.
+- **Done when:** the equivalent fraction on real survivors is measured and reported with its sample size.
+
+### R7. Evidence receipts from the engine · S to M
+- **Why:** reports are reproducible only if they carry hashes of their inputs (K6). `server/queue/receipt.mjs` already builds receipts that validate against the schema, but the engine never calls it.
+- **Done when:** `kinux verify` writes a receipt that passes `validateReceipt`, and a test shows the receipt hash changes when the design, the checks, the operator set, the tool version or the seed changes.
+
+### R8. KiCad 8 or later · S once decided · Human
+- **Why:** ERC, DRC and GLB export need it (K4). It also lets us check the five hand-authored report fixtures against real output.
+- **Do:** decide how to get it (D2). Then wire `runErc` and `runDrc` to call `--format json --output <path>` and return the path (`workers/pcb/erc-drc-report.mjs` already reads it).
+- **Done when:** ERC and DRC run on a real board, and the five hand-authored fixtures are replaced or confirmed.
+
+### R9. Isolate the solvers · L · Human
+- **Why:** netlists, `.inp` decks, `.geo` files and MuJoCo models can all execute code or read files, and today our sanitizers are the only barrier (K1; STATUS section 7, finding 2). Nothing third-party should run until solvers run in containers with no network, a read-only root and a size and time limit.
+- **Do:** decide where untrusted designs run (D3), then build the container runner. Until then, add a clear refusal or warning when a design is not from the repository.
+- **Done when:** a hostile design from each solver's test corpus runs inside the container and demonstrably cannot reach the host.
+
+### R10. The "a model never judges" test · S
+- **Why:** "agents propose, solvers decide" is the project's central rule, and today it is a sentence. A short test can make it a build failure: walk the import graph from the verdict and scoring code and fail if it ever reaches a model SDK or an agent module. Copperhead does this and it costs about twenty lines.
+- **Done when:** the test exists and fails if you add such an import. Extend it when the MCP server lands (R14).
+
+### R11. Small fixes · S each
+Good starting points. Each is one issue from STATUS section 8.
+- K8: `corner()` measures against the passband (also in R4).
+- K10: `3.3F` should not silently mean 3.3 femto.
+- K11: make the queue "timeouts" test insensitive to machine load.
+- K19: unify how `mesh_failed` and `mesh_not_converged` map to verdicts across ngspice and FEA.
+- Corner cases found along the way: the convergence gate in the motion worker can be fooled when both timesteps are equally wrong (STATUS finding 10). At minimum, add a third timestep.
+
+### R12. Documentation debt · S each
+`server/queue`, `workers/ngspice` and `workers/pcb` have no README (K16). Each should say what the module does, its guarantees, and what it does not guarantee. Read the code headers and tests; they are the source of truth.
+
+### R13. Run Gate A and write it down · S
+- **Do:** run the three boards, time each, report the equivalent fraction, and write the outcome, pass or fail, in a new file, `docs/GATE-A.md`.
+- **Done when:** the numbers are measured and committed. A failed gate with honest numbers is a good result.
+
+## 4. Closing Phase A: the MCP server and the Villain
+
+### R14. MCP server · L
+- **Why:** it is how a coding agent starts runs and plays the Villain. The plan calls it the end of Phase A.
+- **Design rules**, taken from what Copperhead learned shipping one:
+  - Expose **outcome-level** tools: `start_run`, `get_status`, `wait_for_run` (capped near 55 seconds), `get_findings`, `open_viewer`. No file-edit tool, no raw solver tool.
+  - **No partial-loop tool.** There must be no sequence of calls that skips the baseline or produces a score without it. Interactive tools for the viewer (`set_param`, `rerun_test`) are fine, but none may be able to produce a score.
+  - **No tool input may turn off a safety rule.** Every optional flag such as `force` or `skip_baseline` is a way around a rail.
+  - Ship a **verdict-interpretation contract** with it, telling the host agent that a FAIL is information to surface, not something to route around. A helpful coding agent's default reaction to a failing check is to get past it.
+  - JSON-RPC alone on stdout; typed "busy" errors rather than an invisible queue; a per-tool schema version; a pinned `0.x` protocol until it settles.
+- **Done when:** it initialises against Claude Code and Codex in automated tests and against Cursor by a manual checklist, with assertions on the MCP call log rather than on the agent's prose.
+
+### R15. Constraint registry · M
+A machine-readable list of limits (a datasheet maximum, an interface limit, a declared budget), each with an `affects` list that drives staleness. It is what lets the Villain's faults be validated without a model judging realism, which the project's own rule forbids.
+
+### R16. AI Villain v0 · L
+The host coding agent proposes faults through MCP (`propose_fault`, `run_faults`, `get_survivors`). A proposed fault **counts toward the score only if its target and bound resolve to an entry in the registry** (R15). An agent-invented fault with no anchor is recorded as an unverified claim and excluded from the denominator. Depends on R14 and R15.
+
+### R17. Staleness and obligations · M
+The contract already has a `result.stale` event and the engine never emits it. When the design changes, every dependent result should be marked stale and shown that way, and a run should not be declarable "done" while a dependent check is unverified. This is what turns "parts verified, system not checked" from a sentence into something enforced.
+
+## 5. The physics track
+
+These follow the plan's order: deterministic checks first, then the slow tier. Start after R13 unless you have spare hands.
+
+### R18. Physics mutation operators · L
+Only thermal is mutation-tested today (K20). The plan lists Villain faults for each domain: for FEA a heavier load, a thinner wall, a weaker material, a hotter ambient; for motion a load of 1.8 times the rating. Each needs operators, baseline gating, and a noise class (R5).
+
+### R19. Thermal where it matters · M
+Thermal checks added nothing on the demo circuit (STATUS section 4). Find or build a design and fault set where temperature rises without moving a measured voltage, use datasheet thermal resistances instead of design rules, and add thermal-specific faults (heatsink removed, ambient raised, duty cycle doubled). Until then the thermal worker is validated but unproven to be useful.
+
+### R20. Physics in the viewer · M
+Render what the workers already produce: recorded MuJoCo trajectories (STEPS S4.5), waveform samples (the panel has the reference but does not load them), and FEA results as per-part numbers in the same cards as thermal. Fields and 3D come later. Keep the rule: draw only what a solver produced.
+
+### R21. The joint-actuator chain · L
+The plan's first whole-machine demo. Motion gives joint torque, which becomes a load on the housing in FEA, while ngspice and the thermal model give heat. The motion worker already exports `kinux.joint_load/1` for this. Chain one way and mark everything else `NOT_CHECKED`. Depends on R22.
+
+### R22. Part and interface contract · M
+**Do this before anyone authors parts.** A schema and validator for parts, interfaces (power, mechanical, signal, thermal), budgets and requirements, with rules a schema cannot express: interface compatibility, budget roll-up, staleness propagation upward, version pinning. Add the precedence rule: requirements outrank budgets, budgets outrank constraints, constraints outrank the design, and a requirement violation is flagged for a person, never silently resolved. This is cheap now and expensive to migrate later, for the same reason the event format was frozen first.
+
+### R23. The slow tier at scale · L
+Finite-element runs are minutes, not milliseconds. Parallel isolated containers, the existing input-keyed cache, time budgets and stop conditions. Depends on R9. This is where rented compute earns its cost.
+
+## 6. Surfaces: the viewer beside the agent
+
+Phase C. Largely unverified; each needs probing on a real editor.
+
+- **R24. Relay.** Serves the viewer, proxies the API, exchanges a first-load nonce for a session cookie so no token stays in the URL. View tokens must not be able to POST. (The run server already does same-origin serving and read-only tokens; this is the rest.)
+- **R25. Editor extension.** Webview tabs beside the chat in VS Code and Open VSX forks.
+- **R26. Probes.** Whether the preview pane loads a hosted URL versus localhost, docking beside Claude Code, Codex and Cursor, SSE through a proxy, workers under webview rules, publishing to both marketplaces. All are *unverified* in the plan and need a person at a screen.
+
+## 7. The proof test (founder-owned, runs in parallel)
+
+### R27. Proof-test materials · Human
+The plan's riskiest assumption is that reviewing surviving faults makes engineers faster. Testing it needs about 10 public boards with blind-seeded bugs, 6 to 8 paid engineers, and a pre-registered hypothesis file committed before any run. Agents can build the study harness, timing sheets and analysis scripts; a person owns recruitment, the bug taxonomy (built independently of the mutation rules), and the pre-registration. Publish the numbers even if bad.
+
+A useful source of realistic buggy boards: designs generated by AI tools such as Copperhead are naturally imperfect, and more representative than hand-seeded faults.
+
+## 8. Later
+
+One line each; see [PLAN.md](PLAN.md) for detail.
+
+- **G. Learning:** lessons for agents, learned priorities, a graph model last.
+- **H. Hand edits:** locks, undo, diff view. Needs rollback; Copperhead's git-snapshot handling (including that KiCad 9 writes a nested `.history/` repository that breaks `git add -A`) is worth reading first.
+- **I. Multi-model and hidden fault sets:** a builder from one vendor, an attacker from another, rotating hidden faults to resist gaming the score.
+- **J. Fabrication:** enclosure fit and print tolerances; printer export only through a local bridge, with a person pressing start.
+- **K. A standalone IDE:** only if the extension cannot do the job and real users need one.
+- **L. Registry, badges, datasets:** a GitHub Action, report pages and a score badge worded "scored", never "certified". Needs a lawyer for contribution terms.
+- **M. Kinux hosting:** only if people ask for it.
+
+## 9. Decisions needed from people
+
+These cannot be settled by writing code. Until they are, the items that depend on them are blocked.
+
+| # | Decision | Blocks |
+|---|---|---|
+| **D1** | **Kinux's licence.** A permissive licence is suggested. The project already contains Apache-2.0 code, so GPLv2 is ruled out. | everything public; R2's board terms |
+| **D2** | **How to get KiCad 8 or later.** Options: the KiCad PPA (the container's policy refused it), a pinned container image, or a CI runner that has it. | R8, and K4 |
+| **D3** | **Where untrusted designs run.** Docker on your own machine, or a small rented Linux box. | R9, R23 |
+| **D4** | **Which three boards.** | R2, R3, R13 |
+| **D5** | **Commitment and the start date.** The plan's schedule assumes week 1 is 23 November, which was never confirmed, and asks for a pause plan. | every date on this page |
+| **D6** | **When to add hosting.** Recommendation: after Gate A. Supabase fits logins, saved run history and shared runs; Vercel can host static report pages; neither runs solvers. | Phase L onward |
+
+## 10. Top risks
+
+1. **Real boards may be mostly unsimulatable.** Many ICs have no SPICE model, so the checkable fraction on a real board could be small. We report it honestly, but it limits how useful the score is. R3 is where we find out. Mitigations: behavioural models, a focus on power and analog subcircuits, and reporting model coverage as a first-class number.
+2. **Gaming the score.** AI-written tests can aim at known operators. Hidden fault sets (phase I) are the planned answer.
+3. **Equivalent mutants** can inflate or deflate the score (R6).
+4. **Copperhead walks toward verification.** Its roadmap includes a SPICE gate. Our edge is what does not bolt on in a weekend: mutation testing, validated physics, and honest `NOT_CHECKED` reporting. A viewer and an MCP server are not an edge.
+5. **Solver inputs are hostile** (R9). One missed escape in any worker undoes the trust we are building.
+6. **The proof test may fail.** The plan accepts that and says stop or pivot before the expensive phases. We should keep the open-source engine, the benchmark and a written negative result worth having either way.
+
+## 11. Picking something up
+
+1. Read STATUS sections 1, 5 and 8, then the item here.
+2. Read [../CONTRIBUTING.md](../CONTRIBUTING.md) for setup and the rules every change follows.
+3. Say you are taking it, in an issue or draft pull request, so two people do not build the same thing.
+4. Good first items: R1, R10, R11, R12.
+5. When you finish, update STATUS (the component table, test counts, and the issue list) in the same change.

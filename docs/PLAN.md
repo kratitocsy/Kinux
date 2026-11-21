@@ -2,7 +2,7 @@
 
 **A workspace IDE for physical AI and hardware.**
 
-> **Status: plan only. Nothing is built.** Every number here (hours, weeks, odds, costs) is an estimate from planning, not a measurement. Items marked *(unverified)* come from web searches or memory and must be tested before we rely on them.
+> **Status: this is the original plan, and work has started.** See [STATUS.md](STATUS.md) for what is built and measured, and [ROADMAP.md](ROADMAP.md) for the current order. Where they disagree with this page, they are right. Every number below (hours, weeks, odds, costs) is an estimate from planning, not a measurement. Items marked *(unverified)* come from web searches or memory and must be tested before we rely on them.
 
 ![Concept render](concept.webp)
 

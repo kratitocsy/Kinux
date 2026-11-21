@@ -2,6 +2,8 @@
 
 The detailed steps behind the stages in [PLAN.md](PLAN.md), condensed from the first planning pass. They were written for a viewer-first order, and the plan's phases A to K reorder them (see section 9 of the plan). Hours are planning estimates for an AI agent doing the work, not measurements, and total about 290.
 
+**Progress against these steps is tracked in [STATUS.md](STATUS.md), section 12.** This page is the original list, so its rows are not kept up to date, apart from a few marked Done.
+
 Legend: **F** = founder, **A** = agent, **R** = reviewer agent. "Needs" lists dependencies.
 
 ## Stage 0: contracts and the sample project
