@@ -398,3 +398,38 @@ describe('kinux verify on a KiCad design', () => {
     assert.match(lines.join('\n'), /unknown key "oops"/);
   });
 });
+
+describe('check net names and aliases', () => {
+  const run = async (sidecarObj, checks) => {
+    const d = tmp();
+    const sc = join(d, 's.json'); writeFileSync(sc, JSON.stringify(sidecarObj));
+    const ck = join(d, 'c.md'); writeFileSync(ck, checks);
+    const lines = [];
+    const code = await main(['verify', DIVIDER, '--sidecar', sc, '--checks', ck, '--out', join(d, 'out'), '--limit', '1'], { log: s => lines.push(s), error: s => lines.push(s) });
+    return { code, text: lines.join('\n') };
+  };
+  const SRC = [{ ref: 'V1', kind: 'vdc', plus: 'VIN', minus: 'GND', volts: 5 }];
+
+  test('a check on a net name the deck does not have is refused, with a hint, never run', async () => {
+    const r = await run({ version: 1, sources: SRC }, '## Simulation\n\nscope: nets [/MID]\nanalysis: op\nassert: V(/MID) between 2 and 3\n');
+    assert.equal(r.code, 2);
+    assert.match(r.text, /check net "\/MID" \(scope\) .*calls this net "MID"/);
+    const s = await run({ version: 1, sources: SRC }, '## Simulation\n\nscope: nets [MID]\nanalysis: op\nsource: CC9=1\nassert: V(MID) between 2 and 3\n');
+    assert.equal(s.code, 2);
+    assert.match(s.text, /"CC9" \(source\)/);
+    assert.ok(!/mutation score/.test(s.text));
+  });
+
+  test('an alias gives `source:` a legal name for a net it could not name, and real ngspice honours it', async () => {
+    // Names like +5V cannot be source ports; here VIN stands in, reached through the alias VINA.
+    const r = await run({ version: 1, aliases: [{ name: 'VINA', net: 'VIN' }] }, '## Simulation\n\nscope: nets [MID, VINA]\nanalysis: op\nsource: VINA=5\nassert: V(MID) between 2.480 and 2.495\n');
+    assert.ok([0, 1].includes(r.code), r.text);
+    assert.match(r.text, /contract-clean/);
+    const p = join(tmp(), 'a.json');
+    writeFileSync(p, JSON.stringify({ version: 1, aliases: [{ name: 'VINA', net: 'VIN' }] }));
+    const built = await buildDesign({ schematic: DIVIDER, sidecar: p });
+    assert.ok(built.netlist.includes('Ralias_VINA VINA VIN 1e-3'));
+    assert.deepEqual(built.manifest.aliases, [{ name: 'VINA', net: 'VIN', element: 'Ralias_VINA' }]);
+    assert.throws(() => validateSidecar({ version: 1, aliases: [{ name: '+5V', net: 'VIN' }] }), AdapterError);
+  });
+});

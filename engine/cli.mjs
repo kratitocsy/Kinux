@@ -23,7 +23,7 @@ import { parseThermalBlocks } from '../workers/thermal/assertions.mjs';
 import { checkRun } from '../contracts/check-run.mjs';
 import { runVerification } from './runner.mjs';
 import { buildReport, finishRun, renderMarkdown, scoreLine } from './report.mjs';
-import { buildDesign, formatSummary, renderDesignSection } from './kicad-adapter.mjs';
+import { buildDesign, formatSummary, unknownCheckNets, renderDesignSection } from './kicad-adapter.mjs';
 
 export const USAGE = `kinux verify -- mutation-test a circuit's check suite
 
@@ -182,6 +182,14 @@ export async function main(argv, io = {}) {
   } catch (e) {
     err(`could not read the inputs: ${e.message}`);
     return 2;
+  }
+  if (designModel) {
+    const bad = unknownCheckNets(suite, designModel, netlist);
+    if (bad.length) {
+      for (const b of bad) err(`check net "${b.name}" (${b.where}) is not a node of the generated deck: ${b.hint}`);
+      err('refusing to run: a check on a name the deck does not have would pass or drive the wrong node. Fix the names in the checks, or add a sidecar alias.');
+      return 2;
+    }
   }
 
   let operators;

@@ -44,8 +44,16 @@
 //       { "ref": "D1", "file": "diodes.lib", "model": "D1N4148",
 //         "ports": ["2","1"] }                                 // .model device: SPICE node order (D: anode, cathode)
 //     ],
-//     "blackbox": [ { "ref": "U2", "reason": "behaviour not modelled; its pins left open" } ]
+//     "blackbox": [ { "ref": "U2", "reason": "behaviour not modelled; its pins left open" } ],
+//     "aliases": [ { "name": "P5V", "net": "+5V" } ]
 //   }
+//
+//   * `aliases` exist because the check grammar refuses a `source:` port whose
+//     name does not start with a letter or underscore (`+5V`). An alias adds a
+//     second, legal node name joined to the real net by a 1 milliohm resistor
+//     `Ralias_<name>`, so `source: P5V=0` drives the +5V net. The real net keeps
+//     its name. Alias parts are listed in the manifest. The mutation engine sees
+//     `Ralias_*` as an ordinary resistor.
 //
 //   * `plus`/`minus` are KiCad net names (a leading `/` is optional).
 //   * A `ports` entry of null is a pin tied to a private floating node.
@@ -243,9 +251,9 @@ function exactKeys(obj, allowed, where) {
 /** Validate a parsed sidecar. Closed schema: anything unknown is an error. */
 export function validateSidecar(sc) {
   if (!sc || typeof sc !== 'object' || Array.isArray(sc)) throw new AdapterError('sidecar must be a JSON object', 'bad_sidecar');
-  exactKeys(sc, ['version', 'sources', 'models', 'blackbox'], 'top level');
+  exactKeys(sc, ['version', 'sources', 'models', 'blackbox', 'aliases'], 'top level');
   if (sc.version !== 1) throw new AdapterError('sidecar "version" must be 1', 'bad_sidecar');
-  const out = { sources: [], models: [], blackbox: [] };
+  const out = { sources: [], models: [], blackbox: [], aliases: [] };
   const seen = new Set();
   const refOf = (e, where) => {
     if (typeof e.ref !== 'string' || !REF_RE.test(e.ref)) throw new AdapterError(`sidecar ${where}: "ref" must match ${REF_RE}`, 'bad_sidecar');
@@ -283,6 +291,12 @@ export function validateSidecar(sc) {
     if (seen.has(b.ref.toLowerCase())) throw new AdapterError(`sidecar: ref ${b.ref} appears twice`, 'bad_sidecar');
     seen.add(b.ref.toLowerCase());
     out.blackbox.push({ ...b });
+  }
+  for (const [i, a] of (sc.aliases ?? []).entries()) {
+    exactKeys(a ?? {}, ['name', 'net'], `aliases[${i}]`);
+    if (typeof a.name !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,31}$/.test(a.name)) throw new AdapterError(`sidecar aliases[${i}]: "name" must start with a letter or underscore and use only letters, digits and _`, 'bad_sidecar');
+    if (typeof a.net !== 'string' || a.net === '') throw new AdapterError(`sidecar aliases[${i}]: "net" must be a net name`, 'bad_sidecar');
+    out.aliases.push({ ...a });
   }
   return out;
 }
@@ -403,7 +417,7 @@ export async function buildDesign({ schematic, sidecar, modelDir, exported, kica
   const exp = exported ?? await exportWithKicadCli(schematic, { bin: kicadBin ?? KICAD_CLI });
   const { comps, nets } = parseKicadNetlist(exp.sexpr);
   const spice = parseKicadSpice(exp.spice);
-  let sc = { sources: [], models: [], blackbox: [] };
+  let sc = { sources: [], models: [], blackbox: [], aliases: [] };
   let sidecarText = null;
   if (sidecar) { const r = readSidecar(sidecar); sc = r.sidecar; sidecarText = r.text; }
   const allowDir = modelDir ?? (sidecar ? dirname(resolve(sidecar)) : null);
@@ -552,6 +566,12 @@ export async function buildDesign({ schematic, sidecar, modelDir, exported, kica
   }
 
   for (const s of sc.sources) lines.push(sourceLine(s, nodeOf));
+  const usedNames = new Set([...netMap.values()].map(v => v.toLowerCase()));
+  for (const a of sc.aliases) {
+    if (usedNames.has(a.name.toLowerCase())) throw new AdapterError(`alias ${a.name} is already a net name in the design`, 'bad_sidecar');
+    usedNames.add(a.name.toLowerCase());
+    lines.push(`Ralias_${a.name} ${a.name} ${nodeOf(a.net)} 1e-3`);
+  }
 
   // The deck. Built only from parsed tokens; no line of KiCad's text is copied.
   const title = `.title kinux kicad-adapter ${basename(schematic ?? 'design')}`.replace(/[^\x20-\x7e]/g, '_');
@@ -559,12 +579,12 @@ export async function buildDesign({ schematic, sidecar, modelDir, exported, kica
   const s = sanitize(deck);
   if (!s.ok) throw new AdapterError(`the generated deck was rejected by the sanitizer (adapter bug or hostile design):\n${describeViolations(s.violations)}`, 'deck_rejected');
 
-  const manifest = summarise({ parts, normalisations, merged, netMap, exp, schematic, sidecarText, hierarchyNote, spiceIgnored: spice.ignored.length, deck, modelFiles: [...modelBlocks.keys()] });
+  const manifest = summarise({ aliasList: sc.aliases.map(a => ({ name: a.name, net: a.net, element: `Ralias_${a.name}` })), parts, normalisations, merged, netMap, exp, schematic, sidecarText, hierarchyNote, spiceIgnored: spice.ignored.length, deck, modelFiles: [...modelBlocks.keys()] });
   if (intent) manifest.intent_check = compareIntent(nets, comps, typeof intent === 'string' ? JSON.parse(readFileSync(resolve(intent), 'utf8')) : intent);
   return { netlist: deck, manifest, nets, comps };
 }
 
-function summarise({ parts, normalisations, merged, netMap, exp, schematic, sidecarText, hierarchyNote, spiceIgnored, deck, modelFiles }) {
+function summarise({ aliasList, parts, normalisations, merged, netMap, exp, schematic, sidecarText, hierarchyNote, spiceIgnored, deck, modelFiles }) {
   const by = {};
   for (const p of parts) if (p.status === 'not_checked') by[p.reason_code] = (by[p.reason_code] ?? 0) + 1;
   const modelled = parts.filter(p => p.status === 'modelled').length;
@@ -586,6 +606,7 @@ function summarise({ parts, normalisations, merged, netMap, exp, schematic, side
     notes: [hierarchyNote, spiceIgnored ? `${spiceIgnored} line(s) of KiCad's SPICE export were stubs or unsupported and were not used` : null,
       'The deck contains only the modelled parts: every not_checked part was left out, so the simulated circuit is the modelled subset, not the whole board.'].filter(Boolean),
     model_files: modelFiles,
+    aliases: aliasList,
   };
 }
 
@@ -653,6 +674,54 @@ export function formatSummary(manifest) {
     for (const m of i.mismatches) L.push(`  mismatch: ${JSON.stringify(m)}`);
   }
   return L.join('\n');
+}
+
+/** Node names of the deck's own circuit (not the insides of inlined subcircuits). */
+export function deckNodes(deck) {
+  const nodes = new Set(['0']);
+  let depth = 0;
+  for (const l of deck.split('\n')) {
+    if (/^\.subckt/i.test(l)) { depth++; continue; }
+    if (/^\.ends/i.test(l)) { depth--; continue; }
+    if (depth !== 0 || !/^[A-Za-z]/.test(l)) continue;
+    const t = l.trim().split(/\s+/);
+    const first = t[0][0].toUpperCase();
+    const n = first === 'X' ? t.length - 2 : first === 'Q' || first === 'J' ? 3 : first === 'M' ? 4 : 2;
+    for (const x of t.slice(1, 1 + n)) nodes.add(x.toLowerCase());
+  }
+  return nodes;
+}
+
+/**
+ * Every net name a check suite uses (scope nets, `source:` ports, V() targets)
+ * must be a node of the deck. One that is not is an ERROR the caller must
+ * surface: a `source:` on an unknown name silently drives a brand-new,
+ * unconnected node, and a check on it would pass for the wrong reason.
+ * @returns {Array<{name:string, where:string, hint:string}>}
+ */
+export function unknownCheckNets(suite, manifest, deck) {
+  const nodes = deckNodes(deck);
+  const problems = [];
+  const seen = new Set();
+  const test = (name, where) => {
+    if (!name || nodes.has(name.toLowerCase()) || /^gnd$/i.test(name)) return;
+    if (seen.has(`${where}|${name}`)) return;
+    seen.add(`${where}|${name}`);
+    const stripped = name.startsWith('/') ? name.slice(1) : name;
+    let hint = 'no such net in the deck';
+    if (nodes.has(stripped.toLowerCase())) hint = `the deck calls this net "${stripped}" (root-sheet local labels lose KiCad's leading "/")`;
+    else if (name in manifest.nets || `/${name}` in manifest.nets) hint = 'the net exists in KiCad but no modelled part touches it, so it is not in the deck';
+    problems.push({ name, where, hint });
+  };
+  for (const b of suite.blocks ?? []) {
+    for (const n of b.scope?.nets ?? []) test(n, 'scope');
+    for (const src of b.sources ?? []) test(src.port, 'source');
+    for (const a of b.assertions ?? []) {
+      const m = a.measurable;
+      if (m?.kind === 'voltage') for (const t of String(m.target).split(',')) test(t.trim(), 'V()');
+    }
+  }
+  return problems;
 }
 
 /** A Markdown section for the top of report.md, so the score never travels without it. */
