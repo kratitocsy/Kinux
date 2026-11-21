@@ -186,6 +186,7 @@ export function buildReport(outcome, opts = {}) {
       equivalence: m.equivalence?.equivalent ? m.equivalence : null,
       dispatch: m.dispatch,
       duration_ms: m.duration_ms,
+      ...(m.skipped_blocks ? { skipped_blocks: m.skipped_blocks } : {}),
     })),
     duplicates: outcome.duplicates ?? [],
     generation_errors: outcome.generation_errors ?? [],

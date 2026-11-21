@@ -57,6 +57,10 @@ export const USAGE = `kinux verify -- mutation-test a circuit's check suite
                       check is NOT_CHECKED (no_material_data).
   --no-queue          run mutants directly instead of through server/queue
   --timeout <ms>      per-simulation timeout (default 20000)
+  --cache <file>      reuse ngspice results across runs (SQLite). The key is the exact
+                      deck, the ngspice version and the compat mode; results do not change
+  --stop-on-kill      run each mutant's blocks cheapest first and stop once it is killed;
+                      killed/survived are unchanged, killed mutants carry fewer results
   --jobs <n>          run up to n mutants at once (default 1); results and events
                       are identical to --jobs 1, only wall time changes
   --ngspice-compat <m> run ngspice with -D ngbehavior=<m>; only "psa" is accepted
@@ -73,7 +77,7 @@ export const USAGE = `kinux verify -- mutation-test a circuit's check suite
 
 /** Parse argv into an options object. Pure, so the tests can use it. */
 export function parseArgs(argv) {
-  const out = { command: null, design: null, checks: null, out: 'kinux-run', threshold: 0.7, limit: Infinity, operators: null, runId: null, project: null, useQueue: true, timeoutMs: undefined, compat: null, jobs: 1, json: false, quiet: false, help: false, serve: false, port: 0, thermalModel: null, sidecar: null, modelDir: null, intent: null };
+  const out = { command: null, design: null, checks: null, out: 'kinux-run', threshold: 0.7, limit: Infinity, operators: null, runId: null, project: null, useQueue: true, timeoutMs: undefined, compat: null, jobs: 1, cache: null, stopOnKill: false, json: false, quiet: false, help: false, serve: false, port: 0, thermalModel: null, sidecar: null, modelDir: null, intent: null };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -107,6 +111,8 @@ export function parseArgs(argv) {
       case '--timeout': out.timeoutMs = Number(next()); break;
       case '--ngspice-compat': out.compat = next(); break;
       case '--jobs': out.jobs = Number(next()); break;
+      case '--cache': out.cache = next(); break;
+      case '--stop-on-kill': out.stopOnKill = true; break;
       case '--json': out.json = true; break;
       case '--quiet': out.quiet = true; break;
       default:
@@ -240,6 +246,11 @@ export async function main(argv, io = {}) {
   }
 
   let outcome;
+  let cache = null;
+  if (opts.cache) {
+    const { ResultCache } = await import('../server/queue/cache.mjs');
+    try { cache = new ResultCache(resolve(opts.cache)); } catch (e) { err(`could not open the cache ${opts.cache}: ${e.message}`); return 2; }
+  }
   try {
     outcome = await runVerification({
       onEvent: live ? live.bridge.sink : undefined,
@@ -254,6 +265,8 @@ export async function main(argv, io = {}) {
       timeoutMs: opts.timeoutMs,
       compat: opts.compat,
       jobs: opts.jobs,
+      cache,
+      stopOnKill: opts.stopOnKill,
     });
   } catch (e) {
     err(`the run could not start: ${e.message}`);
@@ -263,6 +276,10 @@ export async function main(argv, io = {}) {
     return 2;
   }
 
+  if (cache) {
+    log(`cache: ${cache.stats.hits} simulation(s) reused, ${cache.stats.misses} run (${resolve(opts.cache)})`);
+    cache.close();
+  }
   const report = buildReport(outcome, { threshold: opts.threshold });
   if (designModel) report.design_model = { checkable_fraction: designModel.counts.checkable_fraction, modelled: designModel.counts.modelled, electrical: designModel.counts.electrical, not_checked: designModel.counts.by_reason };
   const events = finishRun(outcome, report);

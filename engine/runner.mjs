@@ -29,7 +29,8 @@ import { createHash } from 'node:crypto';
 import { verifySimulation } from '../workers/ngspice/assertions.mjs';
 import { verifyThermal } from '../workers/thermal/assertions.mjs';
 import { THERMAL_TOOL_ID } from '../workers/thermal/model.mjs';
-import { ngspiceVersion } from '../workers/ngspice/run.mjs';
+import { ngspiceVersion, runNetlist } from '../workers/ngspice/run.mjs';
+import { cacheKeySync, sha256 as contentHash } from '../server/queue/cache.mjs';
 import { validateEvent } from '../contracts/check-run.mjs';
 import { parseNetlist } from './netlist.mjs';
 import { generateMutants, OPERATORS, PatchError } from './operators.mjs';
@@ -253,10 +254,17 @@ export function normaliseSuite(suite) {
  * subjects, which is what lets the gate line a mutant's result up with the
  * baseline's.
  */
-export async function runChecks(netlistText, suite, { subject = 'baseline', timeoutMs, compat } = {}) {
-  const results = [];
-  const runs = [];
-  for (const block of suite.blocks) {
+export async function runChecks(netlistText, suite, { subject = 'baseline', timeoutMs, compat, runner, order, stopWhen } = {}) {
+  // `order` runs blocks in a different sequence (cheapest first) and `stopWhen`
+  // ends the run early once the results so far settle the outcome. Results and
+  // runs are still returned in suite order, so output stays deterministic.
+  const perBlock = new Array(suite.blocks.length).fill(null);
+  const sequence = order ?? suite.blocks.map((_, i) => i);
+  for (const bi of sequence) {
+    if (stopWhen && stopWhen(perBlock.flatMap(p => p?.results ?? []))) break;
+    const block = suite.blocks[bi];
+    const results = [];
+    const runs = [];
     if (block.kind === 'thermal') {
       // One-way electrical -> thermal: the thermal worker measures currents
       // through ngspice on this same netlist, then applies the lumped model.
@@ -264,17 +272,57 @@ export async function runChecks(netlistText, suite, { subject = 'baseline', time
         { subject, testIdPrefix: `${suite.id}:${block.prefix}`, timeoutMs, compat });
       results.push(...th.results);
       runs.push({ block: block.prefix, kind: 'thermal', deck: null, duration_ms: null, result_hash: null });
+      perBlock[bi] = { results, runs };
       continue;
     }
     const out = await verifySimulation(
       netlistText,
       { analysis: block.analysis, assertions: block.assertions, sources: block.sources },
-      { subject, testIdPrefix: `${suite.id}:${block.prefix}`, timeoutMs, compat },
+      { subject, testIdPrefix: `${suite.id}:${block.prefix}`, timeoutMs, compat, runner },
     );
     results.push(...out.results);
-    runs.push({ block: block.prefix, deck: out.deck, duration_ms: out.run?.duration_ms ?? null, result_hash: out.run?.result_hash ?? null });
+    runs.push({ block: block.prefix, deck: out.deck, duration_ms: out.run?.duration_ms ?? null, result_hash: out.run?.result_hash ?? null,
+      ...(out.run?.cache ? { cached: out.run.cache.hit } : {}) });
+    perBlock[bi] = { results, runs };
   }
-  return { results, runs };
+  const skipped = suite.blocks.filter((_, i) => perBlock[i] === null).map(b => b.prefix);
+  return {
+    results: perBlock.flatMap(p => p?.results ?? []),
+    runs: perBlock.flatMap(p => p?.runs ?? []),
+    ...(skipped.length ? { skipped_blocks: skipped } : {}),
+  };
+}
+
+/** A failed run that a re-run would reproduce exactly (so it may be cached). Timeouts,
+ *  a missing binary and unclassified tool errors depend on the machine: never cached. */
+export function isCacheable(run) {
+  if (!run || run.timed_out || run.spawn_error || run.stage === 'config') return false;
+  return Boolean(run.ok || run.blocked || ['sim_nonconverge', 'no_model', 'netlist_unsupported'].includes(run.reason_code));
+}
+
+/**
+ * Put a result cache in front of ngspice. ngspice is byte-reproducible (STATUS
+ * section 4), so the same deck under the same ngspice version and compatibility
+ * mode always gives the same answer; the key is exactly those three things.
+ * Check bounds are NOT in the key: they are judged in JavaScript after the run,
+ * so tightening a bound re-scores from the cache, correctly.
+ * @param {import('../server/queue/cache.mjs').ResultCache} cache
+ */
+export function cachingRunner(cache) {
+  return async (deck, opts = {}) => {
+    const v = await ngspiceVersion();
+    if (!v.id) return runNetlist(deck, opts);
+    const { key, material } = cacheKeySync({
+      tool: 'ngspice', toolVersion: v.id,
+      inputs: [{ path: 'deck.cir', sha256: contentHash(deck) }],
+      args: { compat: opts.compat ?? null },
+    });
+    const hit = cache.get(key);
+    if (hit) return { ...hit.result, cache: { hit: true, key } };
+    const run = await runNetlist(deck, opts);
+    if (isCacheable(run)) cache.put(key, run, material);
+    return { ...run, cache: { hit: false, key } };
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -309,6 +357,8 @@ export async function runVerification(options) {
     timeoutMs,
     compat = null,
     jobs = 1,
+    cache = null,
+    stopOnKill = false,
     useQueue = true,
     queuePath = ':memory:',
     onEvent,
@@ -335,7 +385,8 @@ export async function runVerification(options) {
   });
 
   // --- 1. Baseline. Always first. Nothing can be classified before it. ------
-  const baseline = await runChecks(netlist, suite, { subject: 'baseline', timeoutMs, compat });
+  const runner = cache ? cachingRunner(cache) : undefined;
+  const baseline = await runChecks(netlist, suite, { subject: 'baseline', timeoutMs, compat, runner });
   for (const r of baseline.results) {
     stream.queue({ test_id: r.test_id, title: titleFor(r), layer: r.layer, solver: r.solver });
   }
@@ -364,10 +415,21 @@ export async function runVerification(options) {
   const outcomes = [];
   const runnable = prepared.filter(p => !p.equivalence.equivalent);
 
+  // --stop-on-kill: run each mutant's blocks cheapest first (by the baseline's
+  // own measured durations) and stop once the engine's classifier says killed.
+  // Killed and survived come out exactly as without it; a killed mutant just
+  // carries fewer check results, and lists the blocks it skipped.
+  const mutantOpts = { timeoutMs, compat, runner };
+  if (stopOnKill) {
+    const cost = new Map(baseline.runs.map(r => [r.block, r.duration_ms ?? 0]));
+    mutantOpts.order = suite.blocks.map((b, i) => i).sort((a, b) => (cost.get(suite.blocks[a].prefix) ?? 0) - (cost.get(suite.blocks[b].prefix) ?? 0) || a - b);
+    mutantOpts.stopWhen = rs => classifyMutant(gate, rs, { equivalence: { equivalent: false } }).status === 'killed';
+  }
+
   // Equivalents are never simulated: they must not be able to acquire a verdict.
   const executed = useQueue
-    ? await runThroughQueue(runnable, suite, { timeoutMs, compat, queuePath, jobs })
-    : await runDirectly(runnable, suite, { timeoutMs, compat, jobs });
+    ? await runThroughQueue(runnable, suite, { ...mutantOpts, queuePath, jobs })
+    : await runDirectly(runnable, suite, { ...mutantOpts, jobs });
 
   const byId = new Map(executed.map(e => [e.mutant_id, e]));
 
@@ -402,6 +464,7 @@ export async function runVerification(options) {
       equivalence,
       results,
       duration_ms: exec?.duration_ms ?? null,
+      ...(exec?.skipped_blocks ? { skipped_blocks: exec.skipped_blocks } : {}),
       dispatch: exec?.dispatch ?? (equivalence.equivalent ? 'skipped' : null),
     });
   }
@@ -430,11 +493,11 @@ export async function runVerification(options) {
 /* Dispatch                                                                   */
 /* -------------------------------------------------------------------------- */
 
-async function executeOne(mutant, suite, { timeoutMs, compat }) {
+async function executeOne(mutant, suite, { timeoutMs, compat, runner, order, stopWhen }) {
   const started = Date.now();
   try {
-    const { results } = await runChecks(mutant.text, suite, { subject: mutant.mutant_id, timeoutMs, compat });
-    return { mutant_id: mutant.mutant_id, results, error: null, duration_ms: Date.now() - started };
+    const { results, skipped_blocks } = await runChecks(mutant.text, suite, { subject: mutant.mutant_id, timeoutMs, compat, runner, order, stopWhen });
+    return { mutant_id: mutant.mutant_id, results, error: null, duration_ms: Date.now() - started, ...(skipped_blocks ? { skipped_blocks } : {}) };
   } catch (err) {
     // The worker itself broke (not a FAIL, not a NOT_CHECKED). That is an
     // ERROR, and an ERROR never kills.
@@ -473,14 +536,14 @@ async function runDirectly(prepared, suite, { jobs = 1, ...opts } = {}) {
  * path. A job that the queue could not complete becomes an ERROR outcome, never
  * a kill and never a survivor.
  */
-async function runThroughQueue(prepared, suite, { timeoutMs, compat, queuePath, jobs = 1 }) {
+async function runThroughQueue(prepared, suite, { timeoutMs, compat, queuePath, jobs = 1, ...simOpts }) {
   if (!prepared.length) return [];
   let JobQueue, runOne;
   try {
     ({ default: JobQueue, runOne } = await import('../server/queue/queue.mjs'));
   } catch (err) {
     // No node:sqlite, or the queue is unavailable: fall back, loudly.
-    const out = await runDirectly(prepared, suite, { timeoutMs, compat, jobs });
+    const out = await runDirectly(prepared, suite, { timeoutMs, compat, jobs, ...simOpts });
     return out.map(o => ({ ...o, dispatch: `direct (queue unavailable: ${String(err?.message ?? err)})` }));
   }
 
@@ -504,7 +567,7 @@ async function runThroughQueue(prepared, suite, { timeoutMs, compat, queuePath, 
     const drain = async workerId => { for (;;) {
       const done = await runOne(queue, workerId, async job => {
         const mutant = byId.get(job.payload.mutant_id);
-        return executeOne(mutant, suite, { timeoutMs, compat });
+        return executeOne(mutant, suite, { timeoutMs, compat, ...simOpts });
       }, { ttlMs: Math.max(5_000, jobTimeout), timeoutMs: jobTimeout });
       if (!done) break;                              // queue drained
       if (done.outcome === 'completed') {

@@ -41,6 +41,7 @@ export const SUITES = {
   'ngspice-compat': ['ngspice'],
   'netlist-scope': ['ngspice'],
   'engine-parallel': ['ngspice'],
+  'engine-cache': ['ngspice'],
   'examples': ['ngspice'],
   'thermal': ['ngspice'],
   'live': ['ngspice'],

@@ -14,7 +14,7 @@ If this page and the code disagree, the code is right: please fix this page.
 - **Other physics exists as separate workers.** A lumped thermal model is wired into the engine. A MuJoCo motion worker and a CalculiX finite-element worker are each built and checked against hand calculations, but they stand alone: nothing mutation-tests them yet, and the viewer does not display their results.
 - **MCP server v0 exists** (`mcp/server.mjs`, Builder role only, seven tools, no dependencies). It has not yet been connected to a real agent client.
 - **Not built at all:** the editor extension, the relay, 3D views, the part and interface model, Villain agents, learning, hosting.
-- **Tests:** 445 tests in 29 test files, measured 2026-11-21 with ngspice 42, CalculiX 2.21, Gmsh 4.12.1, KiCad 10.0.8 and MuJoCo 4.0.1: 442 pass, 0 fail, 3 skipped (IPv6, because the container has no IPv6, and the two KiCad 7 gate tests, because KiCad 10 is installed). These counts hold in the development container. On a machine missing a solver, most of the affected suites fail rather than skip (K21).
+- **Tests:** 450 tests in 30 test files, measured 2026-11-21 with ngspice 42, CalculiX 2.21, Gmsh 4.12.1, KiCad 10.0.8 and MuJoCo 4.0.1: 446 pass, 0 fail apart from the K11 flake under load, 3 skipped (IPv6, because the container has no IPv6, and the two KiCad 7 gate tests, because KiCad 10 is installed). These counts hold in the development container. On a machine missing a solver, most of the affected suites fail rather than skip (K21).
 
 ## 2. How the pieces fit
 
@@ -226,7 +226,7 @@ Numbered so they can be referred to. Items marked **gap** block a roadmap goal.
 | K8 | `corner()` in the assertion grammar is an absolute −3 dBV crossing, so it only means "filter corner" when passband gain is 0 dB. | bug |
 | K9 | `scope:` in a `## Simulation` block is parsed but not enforced. | bug |
 | K10 | **Fixed.** The engine's number parser read `3.3F` as 3.3 farad, `1A` as 1 ampere and `1mil` as 1 milli; ngspice 42 reads them as 3.3e-15, 1e-18 and 25.4e-6. The parsed number feeds the `from` and `to` values in mutant metadata, so those were wrong by up to 18 orders of magnitude while the netlist text looked right. `engine/netlist.mjs` now matches ngspice; `tests/spice-number.test.mjs` compares 24 tokens against the real binary and fails without the fix. One difference is kept on purpose: in a check, a bare `A` is an ampere (`I(R1) < 2A`); in a netlist it is atto. Still open: `V(out) < 3.3F` is accepted by the assertion grammar and means 3.3 femtovolts. | fixed, with a limit |
-| K11 | One queue test ("timeouts") failed once under full-suite load and passed 15 of 15 times in isolation. It uses a 200 ms process-kill timeout. | flaky |
+| K11 | One queue test ("timeouts") uses a 200 ms process-kill timeout and fails under heavy load. Seen twice: once under full-suite load, and on 2026-11-21 while a 4-worker mutation run held all 4 cores; both times it passed when rerun alone (15 of 15, then 3 of 3). | flaky |
 | K12 | `node:sqlite` needs a recent Node 22 and prints an ExperimentalWarning. `package.json` had said Node 20 would do; that was wrong. | fixed in this change |
 | K13 | The IPv6 listener has never run: the container has no IPv6 stack. The test skips visibly. | unverified |
 | K14 | The live server serves one run per process, and the viewer has no banner when the server goes away. | limit |
