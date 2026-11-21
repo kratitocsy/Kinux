@@ -238,6 +238,11 @@ Our CalculiX worker returns a bare number. Run three mesh levels and report a gr
 - **Do:** load a KiCad GLB in the viewer (Three.js), build a map from reference designator to scene node, and recolour each part from its solver number in bands with a numeric label. A part with no node, or no solver number, shows grey and "NOT WIRED". Stamp the GLB with the hash of the board it came from and show STALE on a mismatch. The motor, housing and gears must come from STEP files, and nothing yet maps a solver part id to a CAD part id.
 - **Done when:** the 555 board's model loads with its parts coloured from the thermal worker, and the 10 parts with no node are shown as not wired.
 
+### R36. A status bar that always shows what is undecided · S
+- **Why:** Copperhead's workspace footer shows stale results, open blockers and items "without a verdict" at all times (LEARNINGS section 1). Our viewer already knows the `NOT_CHECKED` and `ERROR` counts. Stale marks and open obligations wait on R17.
+- **Do:** show "N without a verdict, N stale, N survivors" in the viewer footer on every run, beside the score.
+- **Done when:** a run with `NOT_CHECKED` results shows the count in the footer, and a test pins it. Held back with the rest of the viewer work (D7).
+
 ## 6. Surfaces: the viewer beside the agent
 
 Phase C. Largely unverified; each needs probing on a real editor.
