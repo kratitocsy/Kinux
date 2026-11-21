@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "sources": [
+    { "ref": "V1", "kind": "vdc", "plus": "VIN", "minus": "GND", "volts": 5 }
+  ],
+  "blackbox": [
+    { "ref": "D1", "reason": "clamp diode; behaviour not modelled in this fixture" }
+  ]
+}

@@ -23,11 +23,24 @@ import { parseThermalBlocks } from '../workers/thermal/assertions.mjs';
 import { checkRun } from '../contracts/check-run.mjs';
 import { runVerification } from './runner.mjs';
 import { buildReport, finishRun, renderMarkdown, scoreLine } from './report.mjs';
+import { buildDesign, formatSummary, renderDesignSection } from './kicad-adapter.mjs';
 
 export const USAGE = `kinux verify -- mutation-test a circuit's check suite
 
   node engine/cli.mjs verify <design.cir> --checks <checks.md|checks.json> [options]
+  node engine/cli.mjs verify <design.kicad_sch> --sidecar <json> --checks <checks.md> [options]
 
+  A .kicad_sch is exported with the real kicad-cli and turned into a SPICE deck
+  (engine/kicad-adapter.mjs). Parts with no model are NOT simulated and are listed
+  with a reason; the checkable fraction is printed and written to design-model.json.
+  Exit status 4 means nothing in the design was checkable and no score is claimed.
+
+  --sidecar <json>    sources and model mappings for a KiCad design (schema in the
+                      header of engine/kicad-adapter.mjs)
+  --model-dir <dir>   the only directory model files may be read from (default:
+                      the sidecar's own directory)
+  --intent <json>     a schematic.intent.json; connectivity is compared with it and
+                      every mismatch is listed
   --checks <file>     required; a Markdown file with "## Simulation" blocks, or
                       JSON: { "blocks": [ { "analysis": "op",
                                             "assertions": ["V(out) between 2.3 and 2.4"] } ] }
@@ -55,7 +68,7 @@ export const USAGE = `kinux verify -- mutation-test a circuit's check suite
 
 /** Parse argv into an options object. Pure, so the tests can use it. */
 export function parseArgs(argv) {
-  const out = { command: null, design: null, checks: null, out: 'kinux-run', threshold: 0.7, limit: Infinity, operators: null, runId: null, project: null, useQueue: true, timeoutMs: undefined, json: false, quiet: false, help: false, serve: false, port: 0, thermalModel: null };
+  const out = { command: null, design: null, checks: null, out: 'kinux-run', threshold: 0.7, limit: Infinity, operators: null, runId: null, project: null, useQueue: true, timeoutMs: undefined, json: false, quiet: false, help: false, serve: false, port: 0, thermalModel: null, sidecar: null, modelDir: null, intent: null };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -75,6 +88,9 @@ export function parseArgs(argv) {
       case '--project': out.project = next(); break;
       case '--no-queue': out.useQueue = false; break;
       case '--thermal-model': out.thermalModel = next(); break;
+      case '--sidecar': out.sidecar = next(); break;
+      case '--model-dir': out.modelDir = next(); break;
+      case '--intent': out.intent = next(); break;
       // --serve takes an OPTIONAL port, so only consume the next argv entry
       // when it really is one. "--serve --json" must not eat "--json".
       case '--serve': {
@@ -116,6 +132,7 @@ export function loadSuite(path) {
 }
 
 /** The whole command. Returns the exit code; never calls process.exit itself. */
+/** Exit codes: 0 pass, 1 below threshold, 2 usage or input error, 3 event contract problem, 4 nothing checkable. */
 export async function main(argv, io = {}) {
   const log = io.log ?? (s => process.stdout.write(s + '\n'));
   const err = io.error ?? (s => process.stderr.write(s + '\n'));
@@ -132,9 +149,34 @@ export async function main(argv, io = {}) {
   if (!opts.design) { err('a design netlist is required'); err(USAGE); return 2; }
   if (!opts.checks) { err('--checks is required'); err(USAGE); return 2; }
 
-  let netlist, suite;
+  let netlist, suite, designModel = null, schematicText = null;
+  const isKicad = extname(opts.design).toLowerCase() === '.kicad_sch';
+  if (isKicad) {
+    try {
+      const built = await buildDesign({ schematic: resolve(opts.design), sidecar: opts.sidecar ? resolve(opts.sidecar) : undefined, modelDir: opts.modelDir ? resolve(opts.modelDir) : undefined, intent: opts.intent ? resolve(opts.intent) : undefined });
+      netlist = built.netlist;
+      designModel = built.manifest;
+      schematicText = readFileSync(resolve(opts.design), 'utf8');
+    } catch (e) {
+      err(`could not build a netlist from the KiCad design: ${e.message}`);
+      return 2;
+    }
+    if (!opts.quiet) log(formatSummary(designModel));
+    mkdirSync(resolve(opts.out), { recursive: true });
+    writeFileSync(join(resolve(opts.out), 'design.cir'), netlist, 'utf8');
+    writeFileSync(join(resolve(opts.out), 'design-model.json'), JSON.stringify(designModel, null, 2) + '\n', 'utf8');
+    if (designModel.counts.modelled === 0) {
+      // Nothing was simulated, so there is nothing to score. Say so and stop:
+      // a score here would be a number about an empty circuit.
+      err('nothing in this design is checkable: no part has a model, so no mutation score is claimed. See design-model.json for every part and its reason.');
+      return 4;
+    }
+  } else if (opts.sidecar || opts.modelDir || opts.intent) {
+    err('--sidecar, --model-dir and --intent only apply to a .kicad_sch design');
+    return 2;
+  }
   try {
-    netlist = readFileSync(resolve(opts.design), 'utf8');
+    if (!isKicad) netlist = readFileSync(resolve(opts.design), 'utf8');
     suite = loadSuite(resolve(opts.checks));
     if (opts.thermalModel) suite.thermalModel = JSON.parse(readFileSync(resolve(opts.thermalModel), 'utf8'));
   } catch (e) {
@@ -203,6 +245,7 @@ export async function main(argv, io = {}) {
   }
 
   const report = buildReport(outcome, { threshold: opts.threshold });
+  if (designModel) report.design_model = { checkable_fraction: designModel.counts.checkable_fraction, modelled: designModel.counts.modelled, electrical: designModel.counts.electrical, not_checked: designModel.counts.by_reason };
   const events = finishRun(outcome, report);
   const problems = checkRun(events);
   report.event_stream = { events: events.length, problems };
@@ -214,11 +257,11 @@ export async function main(argv, io = {}) {
     json: join(dir, 'report.json'),
     events: join(dir, 'events.jsonl'),
   };
-  writeFileSync(paths.markdown, renderMarkdown(report), 'utf8');
+  writeFileSync(paths.markdown, (designModel ? renderDesignSection(designModel) + '\n' : '') + renderMarkdown(report), 'utf8');
   writeFileSync(paths.json, JSON.stringify(report, null, 2) + '\n', 'utf8');
   writeFileSync(paths.events, outcome.stream.toJSONL(), 'utf8');
   paths.receipt = join(dir, 'receipt.json');
-  const receipt = makeReceipt({ outcome, report, inputs: [{ path: opts.design, text: netlist }, { path: opts.checks, text: readFileSync(opts.checks, 'utf8') }], operators, limit: opts.limit });
+  const receipt = makeReceipt({ outcome, report, inputs: [{ path: opts.design, text: isKicad ? schematicText : netlist }, ...(isKicad ? [{ path: 'design.cir', text: netlist }] : []), { path: opts.checks, text: readFileSync(opts.checks, 'utf8') }], operators, limit: opts.limit });
   writeFileSync(paths.receipt, JSON.stringify(receipt, null, 2) + '\n', 'utf8');
   report.receipt_id = receipt.receipt_id;
   report.written = paths;
@@ -227,6 +270,7 @@ export async function main(argv, io = {}) {
     if (opts.json) {
       log(JSON.stringify(report, null, 2));
     } else {
+      if (designModel) log(`score covers the modelled subset only: ${designModel.counts.modelled} of ${designModel.counts.electrical} electrical parts (${(designModel.counts.checkable_fraction * 100).toFixed(1)}%)`);
       log(`mutation score: ${scoreLine(report.score)}`);
       if (report.cap) log(`CAP at ${(report.cap.applied_at * 100).toFixed(1)}%${report.cap.bites ? '' : ' (does not bite)'}: ${report.cap.gates.map(g => g.code).join(', ')}`);
       log(`capped score: ${report.effective_score === null ? 'not checkable' : `${(report.effective_score * 100).toFixed(1)}%`} (threshold ${(opts.threshold * 100).toFixed(1)}%)`);
