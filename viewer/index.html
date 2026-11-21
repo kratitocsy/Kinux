@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kinux run viewer</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<div id="app">
+  <noscript>This viewer renders an event stream in the browser and needs JavaScript. The run data itself is plain JSONL.</noscript>
+</div>
+<script type="module">
+  import { bootstrap } from './app.mjs';
+  bootstrap().catch(err => {
+    document.getElementById('app').textContent = 'Viewer failed to start: ' + err.message;
+  });
+</script>
+</body>
+</html>
