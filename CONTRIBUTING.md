@@ -32,18 +32,15 @@ npm ci
 npm install --no-save playwright && npx playwright install chromium   # optional; --no-save leaves package.json alone
 ```
 
-Check what your machine can do, then run the tests. The probe only covers ngspice, `kicad-cli` and Docker; the other tools show up when their tests run.
+Check what your machine can do, then run the tests:
 
 ```bash
-spikes/env/probe.sh
-npm test
+npm run doctor      # which tools you have, which are hidden from the workers, which suites will run
+npm test            # runs every suite whose tools are present, and says which it skipped and why
+npm run test:all    # runs every suite regardless; a missing tool fails. CI uses this
 ```
 
-**If you are missing a tool, expect failures, not skips.** Today only the motion tests and the browser tests skip with a printed reason when their tool is absent. The rest fail, and the `engine` suite does not run at all without ngspice (K21). Making that friendly is a good first task (R1). You can still run the suites you have tools for:
-
-```bash
-node --test tests/contracts.test.mjs tests/kicad-sexp.test.mjs tests/queue.test.mjs
-```
+**If you are missing a tool, `npm test` skips the suites that need it**, by name and with the reason, and runs the rest. The skip is per suite, so a suite's pure unit tests are skipped with it. The motion and browser tests also skip on their own. Running `node --test` directly does not skip, and fails where a tool is missing (K21). When you add a test file, list it in `SUITES` in `scripts/tools.mjs`; a test checks that every suite is listed.
 
 **If your tools are not in `/usr/bin` or `/bin`**, the workers will not find them, because they launch tools with a fixed `PATH` (K22). Point them at the tool with an absolute path:
 
@@ -54,7 +51,7 @@ export KINUX_GMSH_BIN=/path/to/gmsh
 export KINUX_PYTHON=/path/to/python-with-mujoco
 ```
 
-`kicad-cli` has no override and is found through your normal `PATH`.
+`kicad-cli` has no override and is found through your normal `PATH`. `npm run doctor` shows a tool installed where the workers will not look as HIDDEN, and prints the variable to set.
 
 ## 2. What is where
 
@@ -118,7 +115,7 @@ The plan builds with several people or agents at once. It works because each own
 
 ## 7. Tests
 
-- `npm test` runs `node --test tests/*.test.mjs`. One file per component.
+- `npm test` runs every suite whose tools are present (section 1), and `npm run test:raw` is plain `node --test tests/*.test.mjs`. One file per component.
 - Keep tests fast and deterministic. Give anything that can hang an explicit timeout, and always close servers and child processes.
 - A test that drives a browser uses `tests/helpers/browser.mjs`, which skips with a reason when Playwright is missing.
 - A screenshot a test takes goes to a temporary directory, never into the repository. Set `KINUX_SCREENSHOT=<path>` to keep one.

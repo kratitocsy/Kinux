@@ -1,0 +1,60 @@
+# Runs every suite on every push and pull request.
+#
+# It runs them with `npm run test:all`, which does NOT skip a suite whose tool is
+# missing. A contributor's machine may skip; CI must not, or a broken solver
+# install would turn the whole run green by leaving suites out.
+#
+# Status: written but not yet run on GitHub (it was authored in a container with
+# no access to Actions). Expect to adjust the first run. Two things are unverified:
+# that MuJoCo's pinned wheel exists for the runner's Python, and that the IPv6
+# test behaves on a runner.
+#
+# KiCad here is the 7.0.11 from Ubuntu's archive, which cannot open modern boards
+# or run ERC and DRC (docs/ROADMAP.md, R8). When that is decided, Copperhead's CI
+# is a worked example: it installs KiCad 10 from the project's PPA, passes
+# -o APT::Architecture-Variants=amd64 so apt does not silently pick the
+# distribution's own KiCad, installs kicad-footprints too, seeds the global
+# footprint-library table, and fails by name if the version drifts.
+
+name: ci
+
+on:
+  push:
+    branches: [main, 'claude/**']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install solvers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ngspice calculix-ccx gmsh
+          sudo apt-get install -y --no-install-recommends kicad
+
+      - name: Python environment for MuJoCo
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install -r workers/motion/requirements.txt
+
+      - run: npm ci
+
+      - name: Browser for the viewer tests
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+
+      - name: Report what this machine can do
+        run: npm run doctor
+
+      - name: Tests (every suite, none skipped)
+        run: npm run test:all

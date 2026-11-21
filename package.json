@@ -5,7 +5,10 @@
   "description": "A workspace IDE for physical AI and hardware. Early stage: a mutation-testing engine, solver workers and a live viewer. See docs/STATUS.md.",
   "type": "module",
   "scripts": {
-    "test": "node --test tests/*.test.mjs",
+    "test": "node scripts/test.mjs",
+    "test:all": "node scripts/test.mjs --all",
+    "test:raw": "node --test tests/*.test.mjs",
+    "doctor": "node scripts/doctor.mjs",
     "fixtures": "node contracts/fixtures/make-valid-run.mjs"
   },
   "engines": {
