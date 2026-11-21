@@ -71,7 +71,7 @@ R9 isolation  (before any third-party design runs anywhere that matters)
 ### R3. KiCad project to SPICE netlist · L
 - **Why:** the engine only reads a hand-written `.cir` (K2). This is the biggest gap to Gate A, and probably the biggest unknown in the project.
 - **Do:**
-  - Call `kicad-cli sch export netlist --format spice`. The 7.0.11 help lists `spice` as a format; nothing has tried it yet.
+  - Call `kicad-cli sch export netlist --format spice`. The 7.0.11 help lists `spice` as a format. **It cannot yet be tried on a real project**: KiCad 7 fails to load every KiCad 8 file (K4), so this needs R8 first. It has never successfully exported a real schematic.
   - Prefer `kicad-cli` over our own `workers/kicad` reader for connectivity, since the reader refuses hierarchy (K3). Keep the reader for source spans, so a finding can name the exact lines it came from.
   - Report symbols with no SPICE model as `NOT_CHECKED` with `no_model`, never as a pass.
   - Try it on the three boards and on the 19 real schematics in Copperhead's `manual-tests/` (see STATUS section 10).
@@ -97,7 +97,7 @@ R9 isolation  (before any third-party design runs anywhere that matters)
 - **Done when:** `kinux verify` writes a receipt that passes `validateReceipt`, and a test shows the receipt hash changes when the design, the checks, the operator set, the tool version or the seed changes.
 
 ### R8. KiCad 8 or later · S once decided · Human
-- **Why:** ERC, DRC and GLB export need it (K4). It also lets us check the five hand-authored report fixtures against real output.
+- **Why:** ERC, DRC and GLB export need it, and **so does opening any modern board at all**. KiCad 7 refuses files saved by KiCad 8 or later: 18 of 19 real schematics and the one board we tried all failed (K4). That makes this the gate on R3, so the decision (D2) should be made first, not last. It also lets us check the five hand-authored report fixtures against real output.
 - **Do:** decide how to get it (D2). Then wire `runErc` and `runDrc` to call `--format json --output <path>` and return the path (`workers/pcb/erc-drc-report.mjs` already reads it).
 - **Done when:** ERC and DRC run on a real board, and the five hand-authored fixtures are replaced or confirmed.
 
@@ -202,7 +202,7 @@ These cannot be settled by writing code. Until they are, the items that depend o
 | # | Decision | Blocks |
 |---|---|---|
 | **D1** | **Kinux's licence.** A permissive licence is suggested. The project already contains Apache-2.0 code, so GPLv2 is ruled out. | everything public; R2's board terms |
-| **D2** | **How to get KiCad 8 or later.** Options: the KiCad PPA (the container's policy refused it), a pinned container image, or a CI runner that has it. | R8, and K4 |
+| **D2** | **How to get KiCad 8 or later.** Options: the KiCad PPA (reachable from the container, but adding it was refused by the container's policy, so you would allow it or do it on your own machine), a pinned container image (needs Docker), or a CI runner that has it. **This is now the first thing to decide**, because without it no modern board can be opened. | R8, **R3**, and K4 |
 | **D3** | **Where untrusted designs run.** Docker on your own machine, or a small rented Linux box. | R9, R23 |
 | **D4** | **Which three boards.** | R2, R3, R13 |
 | **D5** | **Commitment and the start date.** The plan's schedule assumes week 1 is 23 November, which was never confirmed, and asks for a pause plan. | every date on this page |

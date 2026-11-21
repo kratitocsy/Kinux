@@ -188,6 +188,7 @@ Things we learned by running the tools. Several change how the project has to be
 11. **Every optional flag on a tool is a possible way around a rule.** The design of the future MCP server (see ROADMAP) should expose no tool that can produce a score without running the baseline.
 12. **The mesh-convergence rule catches a real wrong answer.** Linear tetrahedra at 20, 15 and 10 mm give cantilever deflections of 0.40, 0.56 and 0.69 mm against a true 1.52 mm. They lock in bending and keep changing about 25% per step, so the result is `NOT_CHECKED` instead of a wrong PASS. Without the rule this would have been a believable wrong number.
 13. **CalculiX's `.frd` result file carries a timestamp**, so only `job.dat` is byte-reproducible. The worker reads results from `job.dat` only.
+14. **The KiCad version is a hard wall, not a missing feature.** KiCad 7 refuses files from KiCad 8 or later outright (K4). Our own reader still parses them, so we can read modern boards but cannot simulate them. Copperhead requires KiCad 8 or later, so every board it generates is out of reach here too.
 
 ## 8. Known issues and limits
 
@@ -196,9 +197,9 @@ Numbered so they can be referred to. Items marked **gap** block a roadmap goal.
 | # | Issue | Severity |
 |---|---|---|
 | K1 | **No container isolation.** There is no Docker daemon in the development container. The ngspice sanitizer is the only barrier against hostile netlists. Do not run third-party designs here. | gap |
-| K2 | **No KiCad to netlist link.** The engine consumes a hand-written `.cir`. `kicad-cli sch export netlist --format spice` exists in 7.0.11 (the help lists `spice`), but nothing calls it and it has not been tried on real projects. | gap |
+| K2 | **No KiCad to netlist link.** The engine consumes a hand-written `.cir`. `kicad-cli sch export netlist --format spice` exists in 7.0.11 (the help lists `spice`), but nothing calls it. It was tried once, on real projects, and **cannot open any of them**: see K4. | gap |
 | K3 | **Schematic connectivity is single flat sheet only.** Hierarchical designs return `not_derivable`. Of 19 real schematics tried, 10 derived and 9 were refused. | gap |
-| K4 | ERC, DRC and GLB export need KiCad 8 or later, which Ubuntu does not ship. Adding the KiCad PPA was refused by the container's policy. The live ERC/DRC call path is unwired. | gap |
+| K4 | **KiCad 7 cannot open files saved by KiCad 8 or later, and Ubuntu ships only 7.0.11.** Measured: 18 of Copperhead's 19 schematics (file version 20231120) all failed to load, and its one board (20240108) was refused with "unable to open this file because it was created with a newer version of KiCad". The same command loads our KiCad 7 board (20221018). So every modern board is out of reach until a newer KiCad is available, which blocks K2 and R3 outright, not only ERC, DRC and GLB export (which also need 8 or later). Adding the KiCad PPA was refused by the container's policy. The live ERC/DRC call path is unwired. | gap, blocks K2 |
 | K5 | Equivalent-mutant detection accepts only two proofs (identical text, or a change below 1e-6 relative). It deliberately under-detects, which lowers scores. Nothing has been calibrated against the first gate's "under 30% of survivors equivalent". | gap |
 | K6 | The engine does not produce evidence receipts. `server/queue/receipt.mjs` builds them but nothing calls it. | gap |
 | K7 | No CI. Nothing runs the tests on a push. | gap |
