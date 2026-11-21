@@ -40,6 +40,12 @@ Dates come from [PLAN.md](PLAN.md) section 10 and assume week 1 starts **Monday 
 | **C** | Fri 5 Feb | Review time down at least 25% with no loss in bugs found, and at least 5 of 8 engineers would use it | Not started. |
 | **Money** | Fri 12 Feb | Two teams agree to a paid pilot or sign a letter of intent, otherwise it stays open source | Not started. |
 
+Three things about the gates, from a review of our docs against the evidence:
+
+- **The dates are placeholders.** They assume a start that was never confirmed (D5), and Gate A's 10-minute limit is already met many times over (about 3 seconds). The binding constraints are real boards and the equivalent-fault fraction, and neither is tied to a date.
+- **Gate B's measure is circular as written.** A mutation score measures how good the *checks* are. Gate B counts seeded bugs "flagged". The real hypothesis is the link between the two, so "flagged" needs a definition: the seeded bug's location matches a surviving mutant. It also needs a baseline in which a reviewer reads a random sample of the same size, so Gate C can tell the survivor ranking apart from any short list. See R30.
+- **The score may measure the author's checks, not the design's risk.** That is the single biggest risk the review found (section 10).
+
 If Gate B passes and C fails, the plan pivots to audit reports or integration into other tools. If B fails, the plan stops: the benchmark, the open-source engine and a written negative result remain. We should design the work so those outcomes are still worth having.
 
 ## 3. Critical path to Gate A
@@ -54,6 +60,8 @@ R8 KiCad 8+ (human) ───────┘                              │
 R1 CI · R10 import-graph test · R11 small fixes · R12 docs debt   (any time)
 R9 isolation  (before any third-party design runs anywhere that matters)
 ```
+
+**An order suggested by the deep reads, not yet agreed (D7).** A reviewer who read our docs against the evidence argued that surface work (the MCP server, the Villain, physics in the viewer) should wait until Gate A has real numbers, because the gate needs real boards and a measured equivalent fraction, and nothing on the surface produces either. Its suggested next two weeks: R1 (CI, tests that skip, a `kinux doctor`), R8 (decide the KiCad question), R28 on three code-defined boards, R6 (hand-label 30 survivors), R30 (define Gate B), and the licence decision. This is undecided. The founder has asked for the MCP server, which is cheap and makes the Builder and Villain loop real. The cost of building it first is that it does not move Gate A.
 
 ### R1. Continuous integration · S
 - **Why:** 312 tests and nothing runs them on a push (K7). And a contributor without every solver installed sees failures instead of an explanation (K21).
@@ -89,11 +97,12 @@ R9 isolation  (before any third-party design runs anywhere that matters)
 ### R4. Check authoring: where checks live · M
 - **Why:** a mutation score is a property of the check suite, and the plan never said where a design's checks come from. The assertion grammar exists (`## Simulation` blocks); the convention for attaching checks to a KiCad project does not. Gate B's "AI-written tests" have nothing to write into until this exists.
 - **Do:** decide the file convention (for example a checks file beside the project), how a block binds to a sheet or set of nets, and how an agent adds one. Enforce `scope:` (K9). Fix `corner()` so it measures against the passband (K8).
-- **Checks can live in the design source.** `atopile` (`assert` and equations) and `fang` (`require()`) already let a design declare its own constraints. If our grammar can read those, a design arrives with checks to score and nobody has to author a separate file.
+- **Do not count on designs arriving with checks.** `fang`'s `servo_drive` declares 46 checks but no simulation question, and atopile's `assert`s are solved symbolically, not simulated, so neither maps onto a `## Simulation` block. The smallest design that works: one `kinux.checks.md` beside the project, holding `## Simulation` and `## Thermal` blocks as now plus a `binds:` line per block (a sheet, or a set of nets). A block naming a net that does not exist is refused as `unknown_net`. A project with no checks file reports "0 checks found" loudly, never a score. Checks authored by us or by an agent against our grammar are the main path. Details in [LEARNINGS.md](LEARNINGS.md).
 - **Done when:** `kinux verify <project>` finds its own checks, and a check naming a net that does not exist is refused with a clear reason.
 
 ### R5. Per-domain baseline noise · M
 - **Why:** KiCad DRC has findings that are reported but must never fail a baseline (unrouted ratsnest, single-footprint findings). Every other solver has its own equivalent: ngspice convergence warnings, mesh failures, contact noise. Without a "reported, never a failure" class for each, real baselines fail and every mutant becomes unscoreable.
+- **The baseline decides the class.** A warning that appears in the baseline and in a mutant is noise. A warning that appears only in a mutant is a killing signal and is reported, never suppressed. For ngspice, a recovered convergence aid is noise; no convergence, a singular matrix, a missing `.subckt`, or a measure ngspice declined to take is never noise.
 - **Done when:** each wired solver documents its noise class, with a test that the exceptions still fail (as the DRC parser's do).
 
 ### R6. Calibrate equivalent-mutant detection · M · Human
@@ -153,6 +162,11 @@ Good starting points. Each is one issue from STATUS section 8.
 - **Do:** add an operator that applies the worst-case combination of declared tolerances, and report it separately from single faults so the score stays interpretable.
 - **Done when:** on the RC filter, the corner operator is killed by the check while each single 5% drift still survives, matching the hand calculation.
 
+### R30. Define Gate B precisely · S · Human
+- **Why:** the gate as written is circular (section 2). A mutation score measures the checks, not the design.
+- **Do:** write down what "flagged" means (a seeded bug's location matches a surviving mutant), the seeding protocol, and a random-sample baseline in which a reviewer reads as many items as there are survivors. Get it signed off before any board is seeded.
+- **Done when:** a pre-registered definition is committed.
+
 ## 4. Closing Phase A: the MCP server and the Villain
 
 ### R14. MCP server · L
@@ -162,7 +176,10 @@ Good starting points. Each is one issue from STATUS section 8.
   - **No partial-loop tool.** There must be no sequence of calls that skips the baseline or produces a score without it. Interactive tools for the viewer (`set_param`, `rerun_test`) are fine, but none may be able to produce a score.
   - **No tool input may turn off a safety rule.** Every optional flag such as `force` or `skip_baseline` is a way around a rail.
   - **Take structured input, never raw solver text.** `openbench`'s ngspice MCP server accepts a validated JSON netlist and builds the deck itself, which closes the shell-command hole by construction.
-  - **Keep the tool surface small.** The open KiCad MCP server has about 35 tools, and its commercial successor needed 21 on-demand toolsets to manage 228. Copperhead ships five. We plan about five.
+  - **Keep the tool surface small.** The open KiCad MCP server has about 35 tools, and its commercial successor needed 21 on-demand toolsets to manage 228. Copperhead ships five. We plan about five. Our plan's own list names 14, which contradicts that. The proposed v0 list in [LEARNINGS.md](LEARNINGS.md) has seven tools for the Builder, plus three more on a Villain-mode server only.
+  - **The role comes from how the server is launched, never from a tool argument.** The Builder's server does not list the Villain's tools at all, because a model can claim any role in an argument. Hiding survivors from the Builder is enforced nowhere else we looked.
+  - **A proposed fault is a structured request with a handle**, anchored to a verified limit in the registry. Unanchored faults are stored but excluded from the score, and no tool input carries a verdict. `rerun_test` is left out of v0 because it could leak a hidden fault's outcome. `toggle_fault` and `set_param` belong on the viewer, for humans.
+  - **We need cancel, and a way to wait.** Copperhead has neither.
   - Ship a **verdict-interpretation contract** with it, telling the host agent that a FAIL is information to surface, not something to route around. A helpful coding agent's default reaction to a failing check is to get past it.
   - JSON-RPC alone on stdout; typed "busy" errors rather than an invisible queue; a per-tool schema version; a pinned `0.x` protocol until it settles.
 - **Done when:** it initialises against Claude Code and Codex in automated tests and against Cursor by a manual checklist, with assertions on the MCP call log rather than on the agent's prose.
@@ -184,7 +201,7 @@ These follow the plan's order: deterministic checks first, then the slow tier. S
 Only thermal is mutation-tested today (K20). The plan lists Villain faults for each domain: for FEA a heavier load, a thinner wall, a weaker material, a hotter ambient; for motion a load of 1.8 times the rating. Each needs operators, baseline gating, and a noise class (R5).
 
 ### R19. Thermal where it matters · M
-Thermal checks added nothing on the demo circuit (STATUS section 4). Find or build a design and fault set where temperature rises without moving a measured voltage, use datasheet thermal resistances instead of design rules, and add thermal-specific faults (heatsink removed, ambient raised, duty cycle doubled). Until then the thermal worker is validated but unproven to be useful.
+Thermal checks added nothing on the demo circuit (STATUS section 4). Find or build a design and fault set where temperature rises without moving a measured voltage, use datasheet thermal resistances instead of design rules, and add thermal-specific faults (heatsink removed, ambient raised, duty cycle doubled). Until then the thermal worker is validated but unproven to be useful. **Also, our thermal model's `datasheet:` source is a bare string that nothing checks**, so an invented value would pass. Make datasheet values verifiable first (R33), before adding more thermal operators.
 
 ### R20. Physics in the viewer · M
 Render what the workers already produce: recorded MuJoCo trajectories (STEPS S4.5), waveform samples (the panel has the reference but does not load them), and FEA results as per-part numbers in the same cards as thermal. Fields and 3D come later. Keep the rule: draw only what a solver produced.
@@ -193,10 +210,32 @@ Render what the workers already produce: recorded MuJoCo trajectories (STEPS S4.
 The plan's first whole-machine demo. Motion gives joint torque, which becomes a load on the housing in FEA, while ngspice and the thermal model give heat. The motion worker already exports `kinux.joint_load/1` for this. Chain one way and mark everything else `NOT_CHECKED`. Depends on R22.
 
 ### R22. Part and interface contract · M
-**Do this before anyone authors parts.** **Read `fang`'s specification first** (`openspec/specs/fang-kernel/spec.md` in `copperheadhq/fang`, Apache-2.0). It covers typed interfaces and their compatibility checks, units, explicit unknowns, provenance and impact propagation, so most of this design has been thought through once already. We have read its README and code headers, not the spec itself. A schema and validator for parts, interfaces (power, mechanical, signal, thermal), budgets and requirements, with rules a schema cannot express: interface compatibility, budget roll-up, staleness propagation upward, version pinning. Add the precedence rule: requirements outrank budgets, budgets outrank constraints, constraints outrank the design, and a requirement violation is flagged for a person, never silently resolved. This is cheap now and expensive to migrate later, for the same reason the event format was frozen first.
+**Do this before anyone authors parts.** **Read `fang`'s specification first** (`openspec/specs/fang-kernel/spec.md` in `copperheadhq/fang`, Apache-2.0). It covers typed interfaces and their compatibility checks, units, explicit unknowns, provenance and impact propagation, so the electrical half has been thought through once already. **The mechanical and thermal interfaces the joint actuator needs are not there**: all 21 of its interface types are electrical, so those are original design work, and its impact tracking follows one hop only, so staleness up the levels needs our own transitive walk. A read of the specification, and a proposal for our contract, are in [LEARNINGS.md](LEARNINGS.md). A schema and validator for parts, interfaces (power, mechanical, signal, thermal), budgets and requirements, with rules a schema cannot express: interface compatibility, budget roll-up, staleness propagation upward, version pinning. Add the precedence rule: requirements outrank budgets, budgets outrank constraints, constraints outrank the design, and a requirement violation is flagged for a person, never silently resolved. This is cheap now and expensive to migrate later, for the same reason the event format was frozen first.
 
 ### R23. The slow tier at scale · L
 Finite-element runs are minutes, not milliseconds. Parallel isolated containers, the existing input-keyed cache, time budgets and stop conditions. Depends on R9. This is where rented compute earns its cost.
+
+### R31. Model limits and a confidence ceiling · S to M
+- **Why:** our `NOT_CHECKED` says when a check did not run. A PASS says nothing about what the model *left out*. `fang` computes this from the model: each model declares what it does not model, a model's confidence comes from its provenance on a fixed scale, a run's confidence is the minimum over the models it rests on, and nothing ever raises it (LEARNINGS section 3). Without this, every new solver widens the gap between "pass" and what was modelled.
+- **Do:** each worker (ngspice, thermal, motion, FEA) emits a `not_modelled` list and a confidence ceiling. The viewer shows them beside every PASS.
+- **Done when:** no PASS reaches the viewer without its stated gaps.
+
+### R32. Decide at the cheapest level that can answer · S
+- **Why:** thermal checks added nothing on our demo circuit (R19), and we counted a redundant solver run to learn that. `fang`'s rule is simple: if every parameter already has a value and every constraint is decided, nothing runs, and a question nothing covers is unroutable, never answered at another level.
+- **Do:** a closed-form screen (the steady-state rise, power times thermal resistance) that decides a check without running a solver when it can, and escalates when it cannot, saying which it did.
+- **Done when:** a thermal check on the demo circuit reports "decided at the equation level" and a hand calculation agrees.
+
+### R33. Verifiable datasheet values · M
+- **Why:** K23. Copperhead's intake admits a value only if its verbatim snippet occurs in the document text, and treats the model that extracts values as untrusted.
+- **Do:** replace the bare `datasheet:` string with `{value, unit, qualifier, conditions, source: {doc_sha256, page, snippet}}`, and a deterministic verifier with no network and no model. A value that fails is held, and a check that uses it is `NOT_CHECKED` with `unverified_source`. A maximum-limit check needs a MAX-qualified value, not a typical one. Keep `design_rule:` and `assumed:` visibly separate.
+- **Done when:** a thermal model with an invented datasheet value is refused, and one with a real, verified value is accepted.
+
+### R34. A confidence band on finite-element results · M
+Our CalculiX worker returns a bare number. Run three mesh levels and report a grid convergence index band on peak stress, with sanity checks (energy balance, symmetry) beside it. The research repository does this; it has no licence, so only the textbook formulas are usable.
+
+### R35. A per-part 3D view · M, blocked on R8
+- **Do:** load a KiCad GLB in the viewer (Three.js), build a map from reference designator to scene node, and recolour each part from its solver number in bands with a numeric label. A part with no node, or no solver number, shows grey and "NOT WIRED". Stamp the GLB with the hash of the board it came from and show STALE on a mismatch. The motor, housing and gears must come from STEP files, and nothing yet maps a solver part id to a CAD part id.
+- **Done when:** the 555 board's model loads with its parts coloured from the thermal worker, and the 10 parts with no node are shown as not wired.
 
 ## 6. Surfaces: the viewer beside the agent
 
@@ -237,6 +276,7 @@ These cannot be settled by writing code. Until they are, the items that depend o
 | **D4** | **Which three boards.** | R2, R3, R13 |
 | **D5** | **Commitment and the start date.** The plan's schedule assumes week 1 is 23 November, which was never confirmed, and asks for a pause plan. | every date on this page |
 | **D6** | **When to add hosting.** Recommendation: after Gate A. Supabase fits logins, saved run history and shared runs; Vercel can host static report pages; neither runs solvers. | Phase L onward |
+| **D7** | **Whether to pause surface work** (the MCP server, the Villain, physics in the viewer) until Gate A has real numbers. A reviewer recommends pausing. The MCP server is cheap and makes the Builder and Villain loop real, but it does not move Gate A. | the order of everything in section 3 and 4 |
 
 ## 10. Top risks
 
@@ -246,6 +286,8 @@ These cannot be settled by writing code. Until they are, the items that depend o
 4. **Copperhead walks toward verification.** Its roadmap includes a SPICE gate, and its `fang` toolchain already holds a requirements graph, ngspice and Xyce backends, firmware emulation and an MCP server. It has no mutation testing (we searched the whole repository). Our edge is what does not bolt on in a weekend: mutation testing, validated physics, independence from whatever built the design, and honest `NOT_CHECKED` reporting. A viewer and an MCP server are not an edge. The sharper position is to be the independent scoring layer that works on any source, KiCad or code. The closest commercial neighbour is Konnect-EDA (Orchis.ai), which markets "design-review audits" beside 228 design tools, so someone is already selling review for agent-made boards.
 5. **Solver inputs are hostile** (R9). One missed escape in any worker undoes the trust we are building.
 6. **The proof test may fail.** The plan accepts that and says stop or pivot before the expensive phases. We should keep the open-source engine, the benchmark and a written negative result worth having either way.
+7. **The score may measure the author's checks, not the design's risk.** Our own thorough suite scored 60.4% against faults it was not written for, and thermal checks added nothing. If the score mostly reflects what the check author thought of, it is a poor proxy for design risk. The hand-labelled survivors (R6) and the proof test are what will tell us.
+8. **Copperhead adds a mutation score to its own `check`.** That is the closest threat, closer than any commercial product, because it already has the designs, the checks and the users. One response is to offer the engine to them as a plugin instead of competing.
 
 ## 11. Picking something up
 

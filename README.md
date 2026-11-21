@@ -18,6 +18,7 @@ A workspace where AI agents and engineers design hardware and machines together,
 | What to build next, and what is blocked | [docs/ROADMAP.md](docs/ROADMAP.md) |
 | How to set up and contribute | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | The full plan and the reasoning | [docs/PLAN.md](docs/PLAN.md) |
+| What we learned from reading neighbouring projects | [docs/LEARNINGS.md](docs/LEARNINGS.md) |
 
 The plan covers architecture, physics checks, the Villain loop, graph learning, the panels, the staged build, the proof test and its gates, and the risks. It was written before the work started; where it disagrees with STATUS or ROADMAP, those two are right.
 

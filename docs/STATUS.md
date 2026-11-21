@@ -2,18 +2,18 @@
 
 **As of 2026-11-21**, branch `claude/confident-bardeen-wseypk`, at commit `aa72655`.
 
-This page is for people who want to work alongside the project. It says what has been built, what each piece really does, what has been measured, and what is missing. It records what was run, not what was intended. For where the project is going, read [ROADMAP.md](ROADMAP.md). For how to set up and contribute, read [../CONTRIBUTING.md](../CONTRIBUTING.md). The original plan is [PLAN.md](PLAN.md).
+This page is for people who want to work alongside the project. It says what has been built, what each piece really does, what has been measured, and what is missing. It records what was run, not what was intended. For where the project is going, read [ROADMAP.md](ROADMAP.md). For how to set up and contribute, read [../CONTRIBUTING.md](../CONTRIBUTING.md). The original plan is [PLAN.md](PLAN.md). What we learned from reading neighbouring projects is in [LEARNINGS.md](LEARNINGS.md).
 
 If this page and the code disagree, the code is right: please fix this page.
 
 ## 1. The short version
 
 - **The core loop works, end to end, on a hand-written SPICE circuit.** A netlist and a set of checks go in. The engine runs the checks on the original design (the *baseline*), generates faults (*mutants*), runs the checks on each one with real ngspice, decides which faults the checks caught, and produces a score with a confidence interval and an event stream. A browser viewer shows it, live, while it runs. A full run of 54 mutants takes about 3 seconds.
-- **The central claim has been measured, not just asserted.** A weak check suite scores clearly lower than a thorough one on the same design, and the confidence intervals do not overlap (section 4).
+- **The scorer works, on small circuits.** A weak check suite scores clearly lower than a thorough one on the same design, and the confidence intervals do not overlap (section 4). That shows the score discriminates. It does **not** show that the score predicts design risk, or that engineers review faster with it: both are untested, and the thorough suite's 60.4% against 54 generated faults suggests a score can reflect the check author's blind spots.
 - **It has not been run on a real KiCad project.** The link from a KiCad project to a SPICE netlist is not built. The only designs so far are two small circuits written by hand. This is the biggest gap between where we are and the project's first gate.
 - **Other physics exists as separate workers.** A lumped thermal model is wired into the engine. A MuJoCo motion worker and a CalculiX finite-element worker are each built and checked against hand calculations, but they stand alone: nothing mutation-tests them yet, and the viewer does not display their results.
 - **Not built at all:** the MCP server, the editor extension, the relay, 3D views, the part and interface model, Villain agents, learning, hosting.
-- **Tests:** 312 tests in 16 test files. 311 pass, 0 fail, 1 skipped (the IPv6 test, because the development container has no IPv6).
+- **Tests:** 312 tests in 16 test files. 311 pass, 0 fail, 1 skipped (the IPv6 test, because the development container has no IPv6). These counts hold in the development container. On a machine missing a solver, most of the affected suites fail rather than skip (K21).
 
 ## 2. How the pieces fit
 
@@ -80,6 +80,8 @@ Every number here was produced by running the code. The command to reproduce is 
 | same | thorough | 6 of 6 | 100% | not computed |
 
 The intervals on the first pair do not overlap. Reproduce with `node engine/cli.mjs verify engine/fixtures/divider-rc.cir --checks engine/fixtures/checks-weak.md` (and `checks-thorough.md`).
+
+**What this shows, and what it does not.** It shows the scorer separates a weak suite from a thorough one on one circuit with 33 mutants. That is a sanity check of the scorer. It does not show that a high score means a safe design, or that reviewing survivors saves engineers time. The demo's own thorough suite scored 60.4% against 54 generated faults, so a score can reflect what the check's author happened to think of.
 
 The weak suites are written to be weak honestly: the three nets anyone would name, with bounds that look reasonable, and no transient or AC checks. They are plausible, not sabotaged.
 
@@ -216,7 +218,7 @@ Numbered so they can be referred to. Items marked **gap** block a roadmap goal.
 | K7 | No CI. Nothing runs the tests on a push. | gap |
 | K8 | `corner()` in the assertion grammar is an absolute −3 dBV crossing, so it only means "filter corner" when passband gain is 0 dB. | bug |
 | K9 | `scope:` in a `## Simulation` block is parsed but not enforced. | bug |
-| K10 | `3.3F` reads as 3.3 femto in `workers/ngspice/assertions.mjs` (which matches ngspice), but as 3.3 with the unit "F" in `engine/netlist.mjs`. The two number parsers disagree. Both read `M` as milli and `meg` as mega, correctly. | quirk |
+| K10 | `3.3F` reads as 3.3 femto in `workers/ngspice/assertions.mjs` (which matches ngspice), but as 3.3 with the unit "F" in `engine/netlist.mjs`. The two number parsers disagree. Both read `M` as milli and `meg` as mega, correctly. These parsers sit on the verdict path, so this should be fixed before Gate A. | bug |
 | K11 | One queue test ("timeouts") failed once under full-suite load and passed 15 of 15 times in isolation. It uses a 200 ms process-kill timeout. | flaky |
 | K12 | `node:sqlite` needs a recent Node 22 and prints an ExperimentalWarning. `package.json` had said Node 20 would do; that was wrong. | fixed in this change |
 | K13 | The IPv6 listener has never run: the container has no IPv6 stack. The test skips visibly. | unverified |
@@ -225,10 +227,11 @@ Numbered so they can be referred to. Items marked **gap** block a roadmap goal.
 | K16 | Three folders lack READMEs: `server/queue`, `workers/ngspice`, `workers/pcb`. This page is currently their documentation. | docs debt |
 | K17 | Packages installed with `apt` in the development container do not persist. A new container needs them again. | setup |
 | K18 | The project has no licence yet, and it contains Apache-2.0 code (section 10). | decision |
-| K19 | **Inconsistent reason-code mapping.** `workers/ngspice/verdict.mjs` maps `mesh_failed` and `mesh_not_converged` to `ERROR`; the FEA worker maps them to `NOT_CHECKED`, as the plan says. The contract allows both. They should be unified. | bug |
+| K19 | **Inconsistent reason-code mapping.** `workers/ngspice/verdict.mjs` maps `mesh_failed` and `mesh_not_converged` to `ERROR`; the FEA worker maps them to `NOT_CHECKED`, as the plan says. The contract allows both. They should be unified, and before Gate A, because this is the verdict path. | bug |
 | K20 | Only one of the physics workers (thermal) is mutation-tested. Motion and FEA have validated checks but no mutants, no engine integration, and no viewer panels. | gap |
 | K21 | **A missing solver makes tests fail, not skip.** Measured by pointing each worker at a nonexistent binary: with ngspice missing, `ngspice-worker` fails 8 of 13, `ngspice-assertions` 6 of 23, `examples` 12 of 18, `thermal` 9 of 16, and the `engine` suite does not run at all. With CalculiX and Gmsh missing, `fea` fails 13 of 18. `pcb-worker` and `pcb-erc-drc` also fail without `kicad-cli`. Only the motion tests (no MuJoCo) and the browser tests (no Playwright) skip with a printed reason. A contributor without every tool sees red with no explanation. | gap |
 | K22 | **Tools are found at a fixed path.** Workers launch their tool with `PATH` set to `/usr/bin:/bin`, so ngspice, CalculiX or Gmsh installed elsewhere (for example Homebrew on macOS, `/opt/homebrew/bin`) are not found. Override with `KINUX_NGSPICE_BIN`, `KINUX_CCX_BIN`, `KINUX_GMSH_BIN` and `KINUX_PYTHON`, each an absolute path. `kicad-cli` has no override and is found through the normal `PATH`. Nothing has been run on macOS or Windows. | limit |
+| K23 | **Datasheet sources in the thermal model are bare strings that nothing verifies**, so an invented thermal resistance would pass. A model that says `datasheet:` today could be wrong or made up. See R33. | gap |
 
 ## 9. In flight right now
 
@@ -287,7 +290,7 @@ The `copperheadhq` organisation has more than the main repository. Read-only clo
 
 ### Other projects in this space: a survey
 
-Found by searching GitHub, then cloning six and reading them at the level of READMEs, tool lists and keyword searches. Nothing was run, and a GitHub search is not exhaustive. **None of the six does mutation testing**: a keyword search of all six found no real hit (the apparent ones were "mutations" meaning schematic edits, and "injection" meaning dependency injection). That is not proof for the whole world: fault simulation is an established field in chip testing, so our novelty is applying it to board-level design checks with agents, not the idea itself.
+Found by searching GitHub, then cloning six and reading them at the level of READMEs, tool lists and keyword searches. Nothing was run, and a GitHub search is not exhaustive. **None of the six was found to do mutation testing**: a keyword search of all six found no real hit (the apparent ones were "mutations" meaning schematic edits, and "injection" meaning dependency injection). That is not proof for the whole world: fault simulation is an established field in chip testing, so our novelty is applying it to board-level design checks with agents, not the idea itself.
 
 | Project | What it is | Licence | What matters to us |
 |---|---|---|---|
