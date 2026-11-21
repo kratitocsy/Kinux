@@ -30,13 +30,19 @@ const RAIL_NAME = /^(vcc|vdd|vbat|vbus|vin|vsup|v\+|\+?\d+(v\d*|v)|vpp|vee)$/i;
 
 export const isGround = node => GROUND_NODES.has(String(node).toLowerCase());
 
-/** Multiplier suffixes, longest first so MEG wins over M. */
+/**
+ * Multiplier suffixes, longest first so MEG and MIL win over M. These are the
+ * suffixes ngspice itself applies, checked against ngspice 42 (K10): `3.3F` is
+ * 3.3 femto, not 3.3 farad; `1A` is 1 atto, not 1 ampere; `1mil` is 25.4e-6.
+ * A parser that read them otherwise would record the wrong `from` and `to`
+ * values in a mutant's evidence while the netlist text still looked right.
+ */
 const MULTIPLIERS = [
-  ['meg', 1e6], ['t', 1e12], ['g', 1e9], ['k', 1e3],
-  ['m', 1e-3], ['u', 1e-6], ['n', 1e-9], ['p', 1e-12], ['f', 1e-15],
+  ['meg', 1e6], ['mil', 25.4e-6], ['t', 1e12], ['g', 1e9], ['k', 1e3],
+  ['m', 1e-3], ['u', 1e-6], ['n', 1e-9], ['p', 1e-12], ['f', 1e-15], ['a', 1e-18],
 ];
-// Letter groups that are plainly units, never multipliers ("1F" is one farad here, not one femto).
-const PURE_UNITS = new Set(['f', 'v', 'a', 'h', 's', 'hz', 'ohm', 'ohms', 'w']);
+// Letter groups that are plainly units and never start with a multiplier letter.
+const PURE_UNITS = new Set(['v', 'h', 's', 'hz', 'ohm', 'ohms', 'w']);
 
 const NUM_RE = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)([A-Za-z]*)$/;
 
