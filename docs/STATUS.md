@@ -130,6 +130,34 @@ A spike (`spikes/fang/`, reproducible in about 40 seconds) took the SPICE decks 
 
 Both pass in `fang` and both reveal blind spots. The RC filter's band absorbs a 5% drift in either part. The buck converter's bench uses a fixed-duty model with no control loop, so no fault in the feedback network can be seen. Four caveats matter: the checks are weaker than fang's full questions (no ripple measure); 22 of the 62 buck mutants are inside the inlined behavioural model, so the design's own parts score 9 of 40; the deck capture wraps an internal method and may break; and only 2 of 12 `fang` examples produce an ngspice deck at all. The `servo_drive` example has no simulation question. Details are in `spikes/fang/README.md`.
 
+### The first live agent loop (2026-11-21)
+
+A real coding agent (Claude Code, headless, a separate process) was connected to Kinux's MCP server and
+asked to improve quiet-orbit's weak check suite. It could use the seven Kinux tools, read files, and
+edit one file (`checks.md`); no shell, no web. Every new bound had to cite the board's SPEC or BOM.
+
+| Run | Suite | Score (as the run report says) | 95% interval | Baseline |
+|---|---|---|---|---|
+| `rba7a87f5` | the weak suite, unchanged | 6.3% (4 of 63) | 2.5% to 15.2% | 3 of 3 pass |
+| `r4ec9bda2` | the agent's edit | **75.8% (50 of 66)**, capped at **40%** | 64.2% to 84.5% | 16 of 17 pass |
+
+What was checked, not taken on the agent's word: the scores above come from the run reports and the
+server's own call log; the design, sidecar and models hash-match their state before the loop (7 of 7);
+the agent wrote only `checks.md` and its notes; every SPEC and BOM line it cited says what it claims.
+
+The cap is the agent's own finding, kept honestly: it added the BOM's D1 limit (at most 0.8 V drop near
+20 mA), the original design fails it (V(VCC) = 4.079 V with the LEDs on, about 0.92 V across D1), and
+it reported that as a design finding instead of loosening the bound. That matches what the models agent
+measured on the D1 model independently. A check the baseline fails can kill nothing, so the headline is
+capped.
+
+Limits: one loop, one board, one agent, stopped by the agent after 2 runs. Its brief included one hint
+taken from our own earlier quiet-orbit run (a check on a part's current cannot see that part removed),
+so that idea was not discovered by the agent. Its judgements on the 16 remaining survivors are proposals.
+Several bounds are the BOM's 1% resistor tolerance turned into currents (arithmetic shown in the suite).
+The loop's files are outside the repository with the board (`gate-a/loop/qo/`). The MCP server is
+therefore known to work with Claude Code as a client, by hand; R14's automated client tests are not built.
+
 ### Speed
 
 A full mutation run of 54 mutants takes about 3.3 seconds on the development container. The project's first gate allows 10 minutes per board, so electrical mutation testing is cheap. Finite-element runs will not be: 50 mutants at three minutes each is about 2.5 hours. That is where parallel compute becomes worth paying for.
