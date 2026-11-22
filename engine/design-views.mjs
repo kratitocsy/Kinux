@@ -65,7 +65,27 @@ export function schematicParts(text) {
   return out;
 }
 
-/** Footprint positions on a board (page mm), and the board outline's extent. */
+/** The extent of the board outline (Edge.Cuts), in page mm, or null if there is none. */
+export function boardOutline(text) {
+  const root = parseSexp(text)[0] ?? [];
+  const xs = [], ys = [];
+  const add = (x, y) => { if (Number.isFinite(x) && Number.isFinite(y)) { xs.push(x); ys.push(y); } };
+  for (const tag of ['gr_line', 'gr_rect', 'gr_arc', 'gr_circle', 'gr_poly', 'gr_curve']) {
+    for (const g of children(root, tag)) {
+      if (atomAt(child(g, 'layer'), 1) !== 'Edge.Cuts') continue;
+      for (const k of ['start', 'end', 'mid']) { const n = child(g, k); if (n) add(numAt(n, 1), numAt(n, 2)); }
+      if (tag === 'gr_circle') {
+        const c = child(g, 'center'), e = child(g, 'end');
+        if (c && e) { const r = Math.hypot(numAt(e, 1) - numAt(c, 1), numAt(e, 2) - numAt(c, 2)); add(numAt(c, 1) - r, numAt(c, 2) - r); add(numAt(c, 1) + r, numAt(c, 2) + r); }
+      }
+      for (const xy of children(child(g, 'pts') ?? [], 'xy')) add(numAt(xy, 1), numAt(xy, 2));
+    }
+  }
+  if (!xs.length) return null;
+  return { minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) };
+}
+
+/** Footprint positions on a board (page mm). */
 export function boardParts(text) {
   const root = parseSexp(text)[0] ?? [];
   const parts = [];
@@ -113,10 +133,14 @@ export async function exportDesignViews({ schematic, outDir, bin = 'kicad-cli' }
   } catch (e) { notes.push(`schematic SVG export failed: ${String(e.message).split('\n')[0]}`); }
 
   let board = null;
+  let outline = null;
   if (existsSync(pcb)) {
     try {
       const out = join(outDir, 'pcb.svg');
-      await kicad(['pcb', 'export', 'svg', '--mode-single', '--layers', PCB_LAYERS.join(','), '--output', out, pcb], { bin, home });
+      // Board area only, no drawing sheet: the SVG's origin is then the board
+      // outline's corner, and parts.json shifts the PCB markers to match.
+      await kicad(['pcb', 'export', 'svg', '--mode-single', '--page-size-mode', '2', '--exclude-drawing-sheet',
+        '--layers', PCB_LAYERS.join(','), '--output', out, pcb], { bin, home });
       writeFileSync(out, normaliseSvg(readFileSync(out, 'utf8')));
       artifacts.push({ artifact_id: 'pcb', kind: 'pcb_svg', file: 'pcb.svg', mime: 'image/svg+xml' });
     } catch (e) { notes.push(`PCB SVG export failed: ${String(e.message).split('\n')[0]}`); }
@@ -129,12 +153,16 @@ export async function exportDesignViews({ schematic, outDir, bin = 'kicad-cli' }
         notes.push('3D view: board, copper and pads from KiCad; part bodies appear only where KiCad finds a 3D model');
       } catch (e) { notes.push(`GLB export failed: ${String(e.message).split('\n')[0]}`); }
     } else notes.push(`kicad-cli ${caps.version} cannot export GLB: no 3D view`);
-    board = boardParts(readFileSync(pcb, 'utf8'));
+    const pcbText = readFileSync(pcb, 'utf8');
+    board = boardParts(pcbText);
+    outline = boardOutline(pcbText);
+    if (!outline) notes.push('the board has no Edge.Cuts outline: PCB markers are in page coordinates');
   } else notes.push('no .kicad_pcb beside the schematic: no PCB or 3D view');
 
   const parts = {
     schematic: schematicParts(readFileSync(sch, 'utf8')),
-    pcb: board ?? [],
+    pcb: (board ?? []).map(p => (outline ? { ...p, x: p.x - outline.minX, y: p.y - outline.minY } : p)),
+    pcb_outline: outline,
     board3d: (board ?? []).map(p => ({ ref: p.ref, x: p.x / 1000, z: p.y / 1000, side: p.side })),
     notes,
   };

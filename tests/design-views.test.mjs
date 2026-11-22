@@ -64,3 +64,13 @@ test('the real kicad-cli exports the schematic, and two exports are byte-identic
     assert.equal(x.sha256, b.artifacts.find(y => y.artifact_id === x.artifact_id).sha256, `${x.artifact_id} is reproducible`);
   }
 });
+
+test('the board outline is the extent of Edge.Cuts shapes only (rect, line, circle), or null when there is none', async () => {
+  const { boardOutline } = await import('../engine/design-views.mjs');
+  const pcb = `(kicad_pcb
+ (gr_rect (start 100 100) (end 157 157) (layer "Edge.Cuts"))
+ (gr_circle (center 170 120) (end 172 120) (layer "Edge.Cuts"))
+ (gr_line (start 0 0) (end 300 300) (layer "F.SilkS")))`;
+  assert.deepEqual(boardOutline(pcb), { minX: 100, minY: 100, maxX: 172, maxY: 157 });
+  assert.equal(boardOutline('(kicad_pcb (gr_line (start 0 0) (end 1 1) (layer "F.Cu")))'), null);
+});

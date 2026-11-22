@@ -45,6 +45,7 @@ export const SUITES = {
   'review': ['ngspice', 'kicad-cli'],
   'design-views': ['kicad-cli'],
   'ngspice-measure-parse': ['ngspice'],
+  'viewer-board': ['ngspice', 'kicad-cli'],
   'examples': ['ngspice'],
   'thermal': ['ngspice'],
   'live': ['ngspice'],

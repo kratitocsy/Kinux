@@ -37,12 +37,12 @@ function fetchOnce(key, url, as) {
   return cache.get(key);
 }
 
-function marker2d(p, status, selected, onSelect) {
+function marker2d(p, status, selected, onSelect, unit = 1) {
   const color = STATUS_COLOR[status ?? 'none'];
   const g = svgEl('g', { class: `bv-marker${selected ? ' selected' : ''}`, 'data-ref': p.ref, 'data-testid': 'bv-marker', 'data-status': status ?? 'none',
     'data-selected': selected ? 'true' : 'false' }, [
-    svgEl('circle', { cx: p.x, cy: p.y, r: selected ? 4 : 2.6, fill: color, 'fill-opacity': selected ? 0.45 : 0.25, stroke: color, 'stroke-width': selected ? 0.9 : 0.5 }),
-    svgEl('text', { x: p.x + 3.2, y: p.y - 3.2, 'font-size': 2.6, fill: color, 'font-family': 'sans-serif', text: p.ref }),
+    svgEl('circle', { cx: p.x, cy: p.y, r: (selected ? 1.5 : 1) * unit, fill: color, 'fill-opacity': selected ? 0.45 : 0.25, stroke: color, 'stroke-width': (selected ? 0.35 : 0.2) * unit }),
+    svgEl('text', { x: p.x + 1.2 * unit, y: p.y - 1.2 * unit, 'font-size': unit, fill: color, 'font-family': 'sans-serif', text: p.ref }),
   ]);
   g.addEventListener('click', () => onSelect && onSelect(p.ref));
   return g;
@@ -58,14 +58,19 @@ function view2d(key, url, parts, status, selection, ctx, label) {
     cache.set(`${key}:node`, entry);
     fetchOnce(key, url, 'text').then(text => {
       const vb = /viewBox="([^"]+)"/.exec(text)?.[1];
-      if (vb) entry.overlay.setAttribute('viewBox', vb);
+      if (vb) {
+        entry.overlay.setAttribute('viewBox', vb);
+        // Markers scale with the drawing: about 0.9% of its larger side.
+        const [, , w, h] = vb.trim().split(/[\s,]+/).map(Number);
+        if (w > 0 && h > 0) entry.unit = 0.009 * Math.max(w, h);
+      }
       img.src = URL.createObjectURL(new Blob([text], { type: 'image/svg+xml' }));
       entry.ready = true;
       entry.redraw?.();
     }).catch(e => stage.replaceChildren(el('p', { class: 'muted', text: `${label} could not be loaded: ${e.message}` })));
   }
   entry.redraw = () => {
-    entry.overlay.replaceChildren(...parts.map(p => marker2d(p, status.get(p.ref), selection.has(p.ref), ctx.onSelect)));
+    entry.overlay.replaceChildren(...parts.map(p => marker2d(p, status.get(p.ref), selection.has(p.ref), ctx.onSelect, entry.unit ?? 2.6)));
     entry.stage.dataset.ready = entry.ready ? 'true' : 'false';
   };
   entry.redraw();
@@ -106,6 +111,7 @@ function view3d(url, parts, status, selection, ctx) {
         camera.position.copy(centre).add(new THREE.Vector3(size * 0.35, size * 0.9, size * 0.75));
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.target.copy(centre);
+        controls.update(); // aims the camera at the target; without it the board sits off-centre
         const top = box.max.y;
         const geo = new THREE.SphereGeometry(size * 0.012, 16, 12);
         for (const p of parts) {
