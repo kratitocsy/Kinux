@@ -16,6 +16,57 @@ const ACTOR_LABEL = {
   system: 'System',
 };
 
+let activityNode = null;
+
+/** One line of activity, as text: the agent's action, then Kinux's decision. */
+export function describeActivity(a) {
+  const r = a.result ?? {};
+  const args = a.arguments ?? {};
+  if (a.tool === 'kinux_propose') {
+    const what = args.kind === 'citation' ? `cites ${args.doc}: "${String(args.quote ?? '').slice(0, 80)}"`
+      : args.kind === 'fact' ? `fact ${args.claim} ${args.ref ?? args.net ?? ''}`
+      : args.kind === 'measurement' ? `asks ngspice for ${args.probe}${args.sources ? ` with ${Object.entries(args.sources).map(([k, v]) => `${k}=${v}`).join(', ')}` : ''}`
+      : args.kind === 'finding' ? `finding [${args.severity}] ${args.title}`
+      : `question: ${String(args.text ?? '').slice(0, 100)}`;
+    const verdict = r.status === 'verified'
+      ? `verified${r.measured !== undefined ? `: ngspice measured ${r.measured}` : r.cited_line ? ` at ${r.cited_line}` : ''}`
+      : r.status === 'open' ? 'recorded as an open question for a person' : `rejected: ${r.reason ?? r.message ?? ''}`;
+    return { agent: `Reviewer${args.domain ? ` (${args.domain})` : ''}`, action: `${r.id ?? ''} ${what}`.trim(), decision: verdict, ok: r.status !== 'rejected' };
+  }
+  const name = a.tool.replace(/^kinux_/, '').replace(/_/g, ' ');
+  if (a.isError) return { agent: 'Builder', action: name, decision: `refused: ${r.message ?? r.error ?? ''}`, ok: false };
+  const decision = r.score_text ? `score ${r.score_text}${r.survivors !== undefined ? `; ${r.survivors} faults survived` : ''}`
+    : r.run_id ? `run ${r.run_id} ${r.state ?? ''}`.trim() : r.proposals !== undefined ? `${r.proposals} proposals: ${r.verified} verified, ${r.rejected} rejected, ${r.open} open` : '';
+  return { agent: a.role === 'reviewer' ? 'Reviewer' : 'Builder', action: name, decision, ok: true };
+}
+
+function agentActivity(url) {
+  if (activityNode) return activityNode;
+  const list = el('ol', { class: 'activity-list', 'data-testid': 'activity-list' });
+  activityNode = el('div', { class: 'sec activity', 'data-testid': 'agent-activity', hidden: true }, [
+    el('h3', { class: 'sec-title', text: 'Agent activity (MCP)' }),
+    el('p', { class: 'muted', text: 'What the attached coding agent asked for, and what Kinux decided. Recorded by the Kinux server, not by the agent.' }),
+    list,
+  ]);
+  let seen = -1;
+  const poll = () => fetch(url, { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).then(items => {
+    if (!Array.isArray(items) || items.length === seen) return;
+    seen = items.length;
+    activityNode.hidden = items.length === 0;
+    list.replaceChildren(...items.slice(-200).map(a => {
+      const d = describeActivity(a);
+      return el('li', { class: `activity-item${d.ok ? '' : ' activity-no'}`, 'data-testid': 'activity-item', 'data-tool': a.tool }, [
+        el('div', { class: 'log-meta' }, [el('span', { class: 'log-time', text: timeOf(a.ts) }), el('span', { class: 'chip chip-builder', text: d.agent })]),
+        el('div', { class: 'log-text', text: d.action }),
+        d.decision ? el('div', { class: 'activity-decision' }, [el('span', { class: 'chip chip-solver', text: 'Kinux' }), ` ${d.decision}`]) : null,
+      ]);
+    }));
+  }).catch(() => {});
+  poll();
+  setInterval(poll, 3000);
+  return activityNode;
+}
+
 export function renderLogPanel(state, ctx = {}) {
   const selection = ctx.selection instanceof Set ? ctx.selection : new Set();
   const badge = badgeFor(state, 'log');
@@ -37,6 +88,10 @@ export function renderLogPanel(state, ctx = {}) {
     ]));
   }
   body.appendChild(filterBar);
+
+  // What the attached coding agent did over MCP, and what Kinux decided about
+  // it (mcp/server.mjs keeps this record itself). Only when served by an MCP server.
+  if (ctx.activityUrl) body.appendChild(agentActivity(ctx.activityUrl));
 
   const list = el('ol', { class: 'log-list', 'data-testid': 'log-list' });
   for (const entry of state.log) {

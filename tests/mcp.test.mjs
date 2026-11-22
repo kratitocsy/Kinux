@@ -285,6 +285,9 @@ test('open_viewer serves the run to a person on 127.0.0.1, behind a path token, 
       `${base}/runs/../events.jsonl`, `${base}/runs/rffffffff/events.jsonl`, `${base}/viewer/../../package.json`]) {
       assert.equal((await fetch(bad)).status, 404, bad);
     }
+    const act = await (await fetch(`${base}/activity.json`)).json();
+    assert.deepEqual(act.slice(0, 2).map(a => [a.role, a.tool]), [['builder', 'kinux_start_run'], ['builder', 'kinux_wait_for_run']]);
+    assert.ok(act.some(a => a.tool === 'kinux_open_viewer'), 'the activity record is the server\'s, kept for every call');
     const r = await s.call('kinux_render', {});
     assert.equal(r.isError, true, 'a .cir design has no 3D board to render');
     assert.equal(r.structuredContent.error, 'no_board');

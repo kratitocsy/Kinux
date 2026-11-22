@@ -27,7 +27,7 @@ function inside(root, rel) {
   return target === root || target.startsWith(root + sep) ? target : null;
 }
 
-export async function startViewerServer({ runsDir, viewerRoot, port = 0 }) {
+export async function startViewerServer({ runsDir, viewerRoot, port = 0, activity = null }) {
   const token = randomBytes(18).toString('base64url');
   const runsRoot = resolve(runsDir);
   const viewRoot = resolve(viewerRoot);
@@ -40,6 +40,11 @@ export async function startViewerServer({ runsDir, viewerRoot, port = 0 }) {
     const prefix = `/t/${token}/`;
     if (!path.startsWith(prefix)) return notFound();
     const rest = path.slice(prefix.length);
+    if (rest === 'activity.json' && activity) {
+      const body = Buffer.from(JSON.stringify(activity()));
+      res.writeHead(200, { 'content-type': 'application/json', 'content-length': body.length, 'cache-control': 'no-store' });
+      return res.end(req.method === 'HEAD' ? undefined : body);
+    }
     let file = null;
     if (rest === 'viewer' || rest === 'viewer/') file = join(viewRoot, 'index.html');
     else if (rest.startsWith('viewer/')) file = inside(viewRoot, rest.slice('viewer/'.length));

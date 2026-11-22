@@ -383,3 +383,9 @@ svg.strip, svg.trace, svg.ci { display: block; width: 100%; }
 .bv-marker { cursor: pointer; }
 .bv-legend { font-size: 12px; }
 .bv-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; margin-left: 6px; }
+
+/* Agent activity (viewer/panels/log.mjs) */
+.activity-list { list-style: none; margin: 0 0 10px; padding: 0; max-height: 320px; overflow: auto; }
+.activity-item { padding: 5px 0; border-bottom: 1px solid var(--line, #2a2f36); }
+.activity-item.activity-no .activity-decision { color: #e07b7b; }
+.activity-decision { font-size: 12px; margin-top: 2px; }

@@ -152,9 +152,25 @@ export function createServer(opts, { log = () => {} } = {}) {
   // The call log is the evidence of what the agent did (R14: assert on the
   // call log, not on the agent's prose). One JSON line per tool call, written
   // by the server, never by the agent.
+  // Agent activity for the viewer: one compact line per tool call, written by
+  // the server from what it decided, never by the agent. Capped.
+  const activity = [];
+  const summarise = (tool, r) => {
+    if (!r || typeof r !== 'object') return {};
+    const keep = ['run_id', 'state', 'score_text', 'status', 'reason', 'id', 'kind', 'error', 'message', 'verified', 'rejected', 'open', 'proposals'];
+    const out = Object.fromEntries(keep.filter(k => r[k] !== undefined).map(k => [k, typeof r[k] === 'string' ? r[k].slice(0, 300) : r[k]]));
+    if (r.evidence?.measured !== undefined) out.measured = r.evidence.measured;
+    if (r.evidence?.line !== undefined) out.cited_line = `${r.evidence.doc}:${r.evidence.line}`;
+    if (Array.isArray(r.survivors)) out.survivors = r.survivors.length;
+    return out;
+  };
   const callLog = entry => {
-    if (!opts['call-log']) return;
-    appendFileSync(opts['call-log'], `${JSON.stringify({ ts: new Date().toISOString(), ...entry })}\n`);
+    const line = { ts: new Date().toISOString(), role: opts.role ?? 'builder', tool: entry.tool, isError: entry.isError,
+      arguments: JSON.parse(JSON.stringify(entry.arguments ?? {}, (k, v) => (typeof v === 'string' && v.length > 300 ? `${v.slice(0, 300)}…` : v))),
+      result: summarise(entry.tool, entry.result) };
+    activity.push(line);
+    if (activity.length > 2000) activity.shift();
+    if (opts['call-log']) appendFileSync(opts['call-log'], `${JSON.stringify({ ts: line.ts, ...entry })}\n`);
   };
 
   function pick(args = {}) {
@@ -180,7 +196,7 @@ export function createServer(opts, { log = () => {} } = {}) {
   // The local viewer server starts on first use (kinux_open_viewer, kinux_render).
   let viewerPromise = null;
   const getViewer = () => (viewerPromise ??= import('./viewer-server.mjs')
-    .then(m => m.startViewerServer({ runsDir, viewerRoot: join(ROOT, 'viewer') })));
+    .then(m => m.startViewerServer({ runsDir, viewerRoot: join(ROOT, 'viewer'), activity: () => activity })));
 
   let reviewPromise = null;
   const getReview = () => (reviewPromise ??= (async () => {

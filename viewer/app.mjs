@@ -9,7 +9,7 @@ import { renderLogPanel } from './panels/log.mjs';
 import { renderDesignPanel } from './panels/design.mjs';
 import { renderInstrumentsPanel } from './panels/instruments.mjs';
 
-export function createViewer(root, { waveforms = {}, onSelect, artifactUrl = null } = {}) {
+export function createViewer(root, { waveforms = {}, onSelect, artifactUrl = null, activityUrl = null } = {}) {
   let state = null;
   let selectedId = null;
 
@@ -29,7 +29,7 @@ export function createViewer(root, { waveforms = {}, onSelect, artifactUrl = nul
   function render() {
     if (!state) return;
     const selection = expandSelection(state, selectedId);
-    const ctx = { selection, selectedId, onSelect: select, waveforms, artifactUrl };
+    const ctx = { selection, selectedId, onSelect: select, waveforms, artifactUrl, activityUrl };
 
     clear(titlebar);
     const overall = badgeFor(state, 'overall');
@@ -125,7 +125,9 @@ export async function bootstrap(root = document.getElementById('app')) {
     const base = new URL(runParam, globalThis.location.href);
     artifactUrl = a => new URL(a.uri, base).href;
   }
-  const viewer = mountStore(root, store, { artifactUrl });
+  // Served by an MCP server (mcp/viewer-server.mjs): its agent activity sits beside the runs.
+  const activityUrl = runParam ? new URL('../activity.json', globalThis.location.href).href : null;
+  const viewer = mountStore(root, store, { artifactUrl, activityUrl });
   try {
     if (sse) {
       await loadInto(store, sourceFromSSE(sse));
