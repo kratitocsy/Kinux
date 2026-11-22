@@ -345,12 +345,15 @@ export function createServer(opts, { log = () => {} } = {}) {
   const getTeam = () => (teamPromise ??= (async () => {
     const { createTeam } = await import('../engine/team.mjs');
     const { loadSuite } = await import('../engine/cli.mjs');
-    let netlist;
+    let netlist, partInfo = {};
     if (/\.kicad_sch$/i.test(opts.design)) {
       const { buildDesign } = await import('../engine/kicad-adapter.mjs');
-      netlist = (await buildDesign({ schematic: opts.design, sidecar: opts.sidecar, modelDir: opts['model-dir'], intent: opts.intent })).netlist;
+      const built = await buildDesign({ schematic: opts.design, sidecar: opts.sidecar, modelDir: opts['model-dir'], intent: opts.intent });
+      netlist = built.netlist;
+      // The KiCad library entry of every part tells the team what kind of element it is.
+      partInfo = Object.fromEntries(built.manifest.parts.map(p => [p.ref, { lib: p.lib, part: p.part }]));
     } else netlist = readFileSync(opts.design, 'utf8');
-    const t = createTeam({ netlist, suite: loadSuite(opts.checks), compat: opts['ngspice-compat'] ?? null, k: Number(opts.regions ?? 6), jobs: Number(opts.jobs ?? 4) });
+    const t = createTeam({ netlist, suite: loadSuite(opts.checks), compat: opts['ngspice-compat'] ?? null, k: Number(opts.regions ?? 6), jobs: Number(opts.jobs ?? 4), partInfo });
     await t.partition();
     return t;
   })());

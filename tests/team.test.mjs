@@ -118,3 +118,44 @@ test('MCP: --role team gives the lead and its agents the team tools, and nothing
     assert.match(readFileSync(out, 'utf8'), /assert: V\(a\) between 2\.45 and 2\.55/, 'every commit is written to the suite file');
   } finally { child.kill(); }
 });
+
+test('specialists: each region gets the specialist for its kind of element, from the KiCad library when known', async () => {
+  const { partKind, specialtyOf } = await import('../engine/team.mjs');
+  const { parseNetlist } = await import('../engine/netlist.mjs');
+  const nl = parseNetlist(['t', 'R1 a 0 1k', 'C1 a 0 1u', 'XD2 a b SMCW_1206', 'XF1 a b F1_SUB', 'XD1 a b 1N4148W', 'IMCU a 0 DC 0.01', 'XU1 a b c TLC555', ''].join('\n'));
+  const kind = (ref, info) => partKind(nl.component(ref), info);
+  assert.equal(kind('R1'), 'resistor');
+  assert.equal(kind('C1'), 'capacitor');
+  assert.equal(kind('XD2', { lib: 'Device', part: 'LED' }), 'led');
+  assert.equal(kind('XF1', { lib: 'Device', part: 'Polyfuse' }), 'fuse');
+  assert.equal(kind('XD1', { lib: 'Diode', part: '1N4148W' }), 'diode');
+  assert.equal(kind('XD1', { lib: 'Device', part: 'D_TVS' }), 'protection_diode');
+  assert.equal(kind('IMCU'), 'source');
+  assert.equal(kind('XU1', { lib: 'Timer', part: 'TLC555xD' }), 'ic');
+  assert.equal(kind('XU1'), 'ic', 'no library entry: the element type decides');
+  assert.equal(specialtyOf(['resistor', 'led']), 'emitter');
+  assert.equal(specialtyOf(['capacitor', 'diode', 'fuse']), 'protection');
+  assert.equal(specialtyOf(['source', 'resistor']), 'active');
+  assert.equal(specialtyOf(['capacitor', 'capacitor']), 'storage');
+  assert.equal(specialtyOf(['resistor', 'resistor']), 'passive');
+  const t = createTeam({ netlist: NET, suite: WEAK, partInfo: { R1: { lib: 'Device', part: 'R' } } });
+  const part = await t.partition();
+  const a = part.regions.find(r => r.parts.includes('R1'));
+  assert.equal(a.specialist, 'kinux-spec-passive');
+  assert.equal(part.regions.find(r => r.region === 'interfaces').specialist, 'lead');
+  assert.ok(part.specialists.emitter, 'the partition explains every specialty');
+});
+
+test('every specialist the partition can name exists as a subagent, on a faster model than the lead', async () => {
+  const { SPECIALISTS } = await import('../engine/team.mjs');
+  const { readFileSync } = await import('node:fs');
+  for (const k of Object.keys(SPECIALISTS)) {
+    const md = readFileSync(join(ROOT, 'mcp', 'agents', `kinux-spec-${k}.md`), 'utf8');
+    assert.match(md, new RegExp(`^name: kinux-spec-${k}$`, 'm'));
+    assert.match(md, /^model: sonnet$/m);
+    assert.match(md, /^tools: mcp__kinux-team__kinux_region_brief, mcp__kinux-team__kinux_propose_check$/m, 'a specialist cannot claim regions or spawn agents');
+  }
+  const lead = readFileSync(join(ROOT, 'mcp', 'commands', 'kinux-team.md'), 'utf8');
+  assert.match(lead, /^model: opus$/m, 'the lead runs on the stronger model');
+  for (const k of Object.keys(SPECIALISTS)) assert.match(lead, new RegExp(`kinux-spec-${k}`));
+});

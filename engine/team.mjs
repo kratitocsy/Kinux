@@ -98,6 +98,51 @@ export function decompose(netlistText, { k = 6, hubDegree = null } = {}) {
   return { regions, interfaces, regionOf, netOwner };
 }
 
+/**
+ * What kind of element a part is. From the KiCad library entry when the design
+ * has one (Device:LED, Device:Polyfuse, Timer:TLC555xD...), else from the
+ * netlist element and its model name. Unknown is 'other', never a guess.
+ */
+export function partKind(comp, info = null) {
+  const lib = `${info?.lib ?? ''}:${info?.part ?? ''}`.toLowerCase();
+  const model = (comp.type === 'X' ? comp.tail.at(-1) : comp.tail.find(t => /^[a-z]/i.test(t)) ?? '').toLowerCase();
+  if (/led/.test(lib) || /^d.*led|led_/.test(model)) return 'led';
+  if (/polyfuse|fuse|ptc/.test(lib) || /fuse|ptc|mf.?smf/.test(model)) return 'fuse';
+  if (/tvs|zener|esd/.test(lib)) return 'protection_diode';
+  if (/:d(_|$)|diode|1n4148|schottky/.test(lib) || comp.type === 'D') return 'diode';
+  if (/potentiometer|trim/.test(lib)) return 'potentiometer';
+  if (/switch|sw_/.test(lib)) return 'switch';
+  if (/:r$|:r_/.test(lib) || comp.type === 'R') return 'resistor';
+  if (/:c$|:c_|:cp/.test(lib) || comp.type === 'C') return 'capacitor';
+  if (/:l$|:l_/.test(lib) || comp.type === 'L') return 'inductor';
+  if (comp.type === 'I' || comp.type === 'V') return 'source';
+  if (comp.type === 'X' || comp.type === 'U') return 'ic';
+  if (comp.type === 'Q' || comp.type === 'M') return 'transistor';
+  return 'other';
+}
+
+/**
+ * The specialist a region needs, from the kinds of its parts. Active parts
+ * (ICs, stand-in loads, transistors) dominate, then emitters, then protection
+ * and power-path parts, then energy storage; a region of resistors alone is a
+ * passive network.
+ */
+export const SPECIALISTS = {
+  active: 'ICs, MCU stand-in loads, transistors, regulators: supply current, pin levels, reset and enable lines',
+  emitter: 'LEDs and their current-setting resistors: channel current, forward voltage, brightness matching',
+  protection: 'fuses, series diodes, TVS and ESD parts: the power path, drops, leakage, reverse blocking',
+  storage: 'capacitors and inductors: decoupling, timing, filters; what DC can and cannot see',
+  passive: 'resistor networks: dividers, pull-ups and pull-downs, sense and bias resistors',
+};
+export function specialtyOf(kinds) {
+  const has = k => kinds.includes(k);
+  if (has('ic') || has('source') || has('transistor')) return 'active';
+  if (has('led')) return 'emitter';
+  if (has('fuse') || has('diode') || has('protection_diode')) return 'protection';
+  if (has('capacitor') || has('inductor')) return kinds.every(k => k === 'capacitor' || k === 'inductor') || kinds.filter(k => k === 'capacitor' || k === 'inductor').length >= kinds.length / 2 ? 'storage' : 'passive';
+  return 'passive';
+}
+
 /** Who owns what an assertion measures: a region id, 'interfaces', or null (unknown target). */
 export function ownerOf(assertion, d) {
   const m = assertion.measurable;
@@ -139,7 +184,7 @@ async function pool(items, n, fn) {
   return out;
 }
 
-export function createTeam({ netlist: netlistText, suite: rawSuite, compat = null, timeoutMs = 120_000, k = 6, jobs = 4 }) {
+export function createTeam({ netlist: netlistText, suite: rawSuite, compat = null, timeoutMs = 120_000, k = 6, jobs = 4, partInfo = {} }) {
   let suite = normaliseSuite(rawSuite);
   suite = { ...suite, blocks: suite.blocks.map(b => ({ ...b, assertions: [...(b.assertions ?? [])] })) };
   const nl = parseNetlist(netlistText);
@@ -174,7 +219,10 @@ export function createTeam({ netlist: netlistText, suite: rawSuite, compat = nul
     const ms = state.mutants.filter(m => m.region === id);
     const s = scoreOf(ms);
     const r = d.regions.find(x => x.id === id);
-    return { region: id, parts: r?.parts ?? [], nets: r?.nets ?? d.interfaces, faults: ms.length, killed: s.killed, survived: s.survived,
+    const kinds = (r?.parts ?? []).map(p => partKind(nl.component(p), partInfo[p.replace(/^X(?=[A-Z])/, '')] ?? partInfo[p] ?? null));
+    const specialty = id === 'interfaces' ? 'interfaces' : specialtyOf(kinds);
+    return { region: id, parts: r?.parts ?? [], kinds, specialty, specialist: id === 'interfaces' ? 'lead' : `kinux-spec-${specialty}`,
+      nets: r?.nets ?? d.interfaces, faults: ms.length, killed: s.killed, survived: s.survived,
       not_checked: s.not_checked + s.errors, score: s.score, leased_to: leases.get(id)?.agent ?? null };
   };
 
@@ -188,6 +236,7 @@ export function createTeam({ netlist: netlistText, suite: rawSuite, compat = nul
         regions: regionIds().map(regionView),
         interfaces: d.interfaces,
         global: scoreOf(state.mutants),
+        specialists: SPECIALISTS,
         rule: 'Each region owns its parts (I(part)) and interior nets (V(), f()). Interface nets and the block sources (I(Vksrc..)) belong to "interfaces", the lead\'s region. Claim a region to work on it; one lease per region.',
       };
     },

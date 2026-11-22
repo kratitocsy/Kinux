@@ -63,3 +63,33 @@ it that names the run it came from. It is a picture for a report, not a verdict.
 A FAIL is information to report, not an obstacle to route around. NOT_CHECKED and ERROR are never
 a pass. A score always travels with its checkable fraction, mutant count and interval. Every
 number comes from a solver. This is a pre-check linter, not a certification.
+
+## The team: a lead on the strongest model, specialists on each kind of element
+
+Kinux splits the circuit into regions that meet at interface nets (the rails, ground, busy nets), the
+way a finite-element solver splits a model into elements. Each region gets the specialist for its kind
+of element; one lead plans, dispatches and judges.
+
+```bash
+claude mcp add kinux-team -- node /path/to/Kinux/mcp/server.mjs --role team --design board.kicad_sch --sidecar board.sidecar.json --checks checks.md --regions 8 --suite-out team-suite.md
+```
+
+```bash
+mkdir -p .claude/agents .claude/commands && cp /path/to/Kinux/mcp/agents/kinux-spec-*.md .claude/agents/ && cp /path/to/Kinux/mcp/commands/kinux-team.md .claude/commands/
+```
+
+Then run `/kinux-team` in Claude Code. The lead runs on Opus (`model: opus` in the command); the
+five specialists run on Sonnet (`model: sonnet` in each agent file):
+
+| Specialist | Regions it gets |
+|---|---|
+| kinux-spec-active | ICs, MCU stand-in loads, transistors, regulators |
+| kinux-spec-emitter | LEDs and their current-setting resistors |
+| kinux-spec-protection | fuses, series diodes, TVS and ESD parts on the power path |
+| kinux-spec-storage | capacitors and inductors: decoupling, timing, filters |
+| kinux-spec-passive | resistor networks: dividers, pull-ups, pull-downs, sense resistors |
+
+Kinux, not the agents, keeps it cohesive: one lease per region, a check only on what the proposer's
+region owns, every check judged in one queue (it must pass the design, catch a surviving fault, and
+leave the whole suite passing with the global score not lower), and the suite written after every
+commit.
