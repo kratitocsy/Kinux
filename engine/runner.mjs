@@ -312,7 +312,10 @@ export function cachingRunner(cache) {
   return async (deck, opts = {}) => {
     const v = await ngspiceVersion();
     if (!v.id) return runNetlist(deck, opts);
+    // schemaVersion 2: K31 changed how measurements are parsed, and a cached
+    // run stores its parsed measurements, so every older entry is invalid.
     const { key, material } = cacheKeySync({
+      schemaVersion: 2,
       tool: 'ngspice', toolVersion: v.id,
       inputs: [{ path: 'deck.cir', sha256: contentHash(deck) }],
       args: { compat: opts.compat ?? null },
@@ -359,6 +362,7 @@ export async function runVerification(options) {
     jobs = 1,
     cache = null,
     stopOnKill = false,
+    designViews = [],
     useQueue = true,
     queuePath = ':memory:',
     onEvent,
@@ -383,6 +387,12 @@ export async function runVerification(options) {
     source: provenance === 'real' ? 'live' : provenance,
     design_artifact_ref: options.designRef ?? undefined,
   });
+  // The design's own views (schematic, PCB, 3D, part positions), produced by
+  // KiCad, announced before anything is simulated so a viewer can draw them.
+  for (const v of designViews) {
+    stream.emit('test.artifact', { test_id: 'design', artifact_id: v.artifact_id, kind: v.kind, uri: v.uri, sha256: v.sha256, bytes: v.bytes, mime: v.mime },
+      { kind: 'system', id: 'kicad-cli' });
+  }
 
   // --- 1. Baseline. Always first. Nothing can be classified before it. ------
   const runner = cache ? cachingRunner(cache) : undefined;

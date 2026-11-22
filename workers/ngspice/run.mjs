@@ -84,7 +84,10 @@ export function parseMeasurements(stdout) {
   const measurements = {};
   const failed = [];
   const NUM = '[-+]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][-+]?\\d+)?';
-  const re = new RegExp(`^\\s*([A-Za-z_][\\w.$#:\\[\\]]*)\\s*=\\s*(${NUM})\\s*(?:at\\s*=\\s*(${NUM}))?\\s*$`);
+  // ngspice follows the value with `at= t` (FIND/WHEN), `from= t1 to= t2`
+  // (AVG/RMS/MIN/MAX/INTEG) or `targ= .. trig= ..` (TRIG/TARG). Accepting only
+  // `at=` dropped every average (K31); `at` is still the one trailer recorded.
+  const re = new RegExp(`^\\s*([A-Za-z_][\\w.$#:\\[\\]]*)\\s*=\\s*(${NUM})((?:\\s+(?:at|from|to|targ|trig)\\s*=\\s*${NUM})*)\\s*$`);
   for (const raw of stdout.split('\n')) {
     const line = raw.replace(/\r/g, '');
     if (/failed!\s*$/i.test(line)) {
@@ -97,7 +100,8 @@ export function parseMeasurements(stdout) {
     const name = m[1].toLowerCase();
     // Skip the node-voltage table ngspice prints for .op; those use the same
     // shape but are indented inside a "Node / Voltage" block.
-    measurements[name] = { value: Number(m[2]), at: m[3] === undefined ? null : Number(m[3]) };
+    const at = new RegExp(`\\bat\\s*=\\s*(${NUM})`).exec(m[3] ?? '');
+    measurements[name] = { value: Number(m[2]), at: at ? Number(at[1]) : null };
   }
   return { measurements, failed };
 }
