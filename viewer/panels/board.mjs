@@ -113,8 +113,22 @@ function view3d(url, parts, status, selection, ctx) {
         controls.target.copy(centre);
         controls.update(); // aims the camera at the target; without it the board sits off-centre
         const top = box.max.y;
+        // KiCad names each part's body by its reference (when its 3D model was
+        // found). Those bodies are tinted and picked directly; markers stand in
+        // only for parts with no body (test points, holes, missing models).
+        const bodies = new Map();
+        const known = new Set(parts.map(p => p.ref));
+        gltf.scene.traverse(o => {
+          if (known.has(o.name) && !bodies.has(o.name)) {
+            const meshes = [];
+            o.traverse(m => { if (m.isMesh) { m.material = m.material.clone(); m.userData.ref = o.name; meshes.push(m); } });
+            if (meshes.length) bodies.set(o.name, meshes);
+          }
+        });
+        entry.bodies = bodies;
         const geo = new THREE.SphereGeometry(size * 0.012, 16, 12);
         for (const p of parts) {
+          if (bodies.has(p.ref)) continue;
           const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: STATUS_COLOR.none, emissive: 0x000000 }));
           m.position.set(p.x, top + size * 0.012, p.z);
           m.userData.ref = p.ref;
@@ -128,13 +142,24 @@ function view3d(url, parts, status, selection, ctx) {
           const r = renderer.domElement.getBoundingClientRect();
           const v = new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
           ray.setFromCamera(v, camera);
-          const hit = ray.intersectObjects([...entry.markers.values()])[0];
+          const hit = ray.intersectObjects([...entry.markers.values(), ...[...bodies.values()].flat()])[0];
           if (hit && ctx.onSelect) ctx.onSelect(hit.object.userData.ref);
         });
         renderer.domElement.dataset.testid = 'bv-canvas';
+        stage.dataset.bodies = String(bodies.size);
         stage.replaceChildren(renderer.domElement);
         stage.dataset.ready = 'true';
         entry.redraw = (st, sel) => {
+          for (const [ref, meshes] of bodies) {
+            const on = sel.has(ref);
+            const status = st.get(ref);
+            for (const m of meshes) {
+              if (!m.material.emissive) continue;
+              // A tint, not a repaint: the part keeps KiCad's own colours underneath.
+              m.material.emissive.set(status ? STATUS_COLOR[status] : 0x000000);
+              m.material.emissiveIntensity = on ? 0.9 : status ? 0.45 : 0;
+            }
+          }
           for (const [ref, m] of entry.markers) {
             const on = sel.has(ref);
             m.material.color.set(STATUS_COLOR[st.get(ref) ?? 'none']);
@@ -187,7 +212,7 @@ export function renderBoardViews(state, ctx) {
   const legend = el('p', { class: 'muted bv-legend' }, [
     'Drawn by KiCad (kicad-cli); markers by Kinux, coloured by the worst mutant on each part: ',
     ...['survived', 'killed', 'not_checked', 'none'].flatMap(s => [el('span', { class: 'bv-swatch', style: `background:${STATUS_COLOR[s]}` }), ` ${s === 'none' ? 'no mutant' : s.replace('_', ' ')}  `]),
-    views.board3d ? 'Part bodies in 3D appear only where KiCad found a 3D model.' : '',
+    views.board3d ? 'In 3D, part bodies are tinted by the same colours; parts without a 3D model keep a marker.' : '',
   ]);
   return section('Board views', [bar, holder, legend], { 'data-testid': 'board-views' });
 }
