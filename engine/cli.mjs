@@ -164,7 +164,7 @@ export async function main(argv, io = {}) {
   if (!opts.design) { err('a design netlist is required'); err(USAGE); return 2; }
   if (!opts.checks) { err('--checks is required'); err(USAGE); return 2; }
 
-  let netlist, suite, designModel = null, schematicText = null;
+  let netlist, suite, designModel = null, schematicText = null, designViews = [];
   const isKicad = extname(opts.design).toLowerCase() === '.kicad_sch';
   if (isKicad) {
     try {
@@ -177,6 +177,15 @@ export async function main(argv, io = {}) {
       return 2;
     }
     if (!opts.quiet) log(formatSummary(designModel));
+    try {
+      const { exportDesignViews } = await import('./design-views.mjs');
+      const views = await exportDesignViews({ schematic: resolve(opts.design), outDir: join(resolve(opts.out), 'views') });
+      designViews = views.artifacts.map(a => ({ ...a, uri: `views/${a.file}` }));
+      if (!opts.quiet) for (const n of views.notes) log(`  views: ${n}`);
+    } catch (e) {
+      // The views are for people; a failure to draw them never stops a run.
+      if (!opts.quiet) log(`  views: not exported (${e.message})`);
+    }
     mkdirSync(resolve(opts.out), { recursive: true });
     writeFileSync(join(resolve(opts.out), 'design.cir'), netlist, 'utf8');
     writeFileSync(join(resolve(opts.out), 'design-model.json'), JSON.stringify(designModel, null, 2) + '\n', 'utf8');
@@ -245,6 +254,9 @@ export async function main(argv, io = {}) {
     if (io.onServe) io.onServe(live);
   }
 
+  // A live viewer fetches the views by content hash from the run server's store.
+  if (live) for (const v of designViews) live.server.store.putArtifact(readFileSync(join(resolve(opts.out), v.uri)));
+
   let outcome;
   let cache = null;
   if (opts.cache) {
@@ -267,6 +279,7 @@ export async function main(argv, io = {}) {
       jobs: opts.jobs,
       cache,
       stopOnKill: opts.stopOnKill,
+      designViews,
     });
   } catch (e) {
     err(`the run could not start: ${e.message}`);

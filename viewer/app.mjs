@@ -9,7 +9,7 @@ import { renderLogPanel } from './panels/log.mjs';
 import { renderDesignPanel } from './panels/design.mjs';
 import { renderInstrumentsPanel } from './panels/instruments.mjs';
 
-export function createViewer(root, { waveforms = {}, onSelect } = {}) {
+export function createViewer(root, { waveforms = {}, onSelect, artifactUrl = null } = {}) {
   let state = null;
   let selectedId = null;
 
@@ -29,7 +29,7 @@ export function createViewer(root, { waveforms = {}, onSelect } = {}) {
   function render() {
     if (!state) return;
     const selection = expandSelection(state, selectedId);
-    const ctx = { selection, selectedId, onSelect: select, waveforms };
+    const ctx = { selection, selectedId, onSelect: select, waveforms, artifactUrl };
 
     clear(titlebar);
     const overall = badgeFor(state, 'overall');
@@ -113,13 +113,24 @@ export async function bootstrap(root = document.getElementById('app')) {
   }
   const params = new URLSearchParams(globalThis.location?.search || '');
   const sse = params.get('sse');
+  const runParam = params.get('run');
   const store = createStore();
-  const viewer = mountStore(root, store);
+  // Where the run's artifacts come from: by content hash from the live server
+  // (with the same read-only token as the stream), or beside a replayed file.
+  let artifactUrl = null;
+  if (sse) {
+    const token = new URL(sse, globalThis.location.href).searchParams.get('token');
+    artifactUrl = a => `/artifacts/${String(a.sha256).replace(/^sha256:/, '')}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+  } else if (runParam) {
+    const base = new URL(runParam, globalThis.location.href);
+    artifactUrl = a => new URL(a.uri, base).href;
+  }
+  const viewer = mountStore(root, store, { artifactUrl });
   try {
     if (sse) {
       await loadInto(store, sourceFromSSE(sse));
     } else {
-      const url = params.get('run') || '../contracts/fixtures/valid-run.events.jsonl';
+      const url = runParam || '../contracts/fixtures/valid-run.events.jsonl';
       const res = await fetch(url);
       if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
       const events = parseJSONL(await res.text());

@@ -43,3 +43,10 @@ are our own hand-authored files, not upstream material, and their README says
 which is which.
 
 No Copperhead trademark is used, and nothing here implies endorsement.
+
+## three.js (vendored in the viewer)
+
+| Component | Version | Licence | Where | What was taken |
+|---|---|---|---|---|
+| three.js | 0.169.0, from the npm registry (tarball sha256 c86d0937570fb425d981e156ddf919c43dbc45d4e91fd7c8dd0de56723b3ec71) | MIT, Copyright © 2010-2024 three.js authors; full text in `viewer/vendor/three/LICENSE` | `viewer/vendor/three/` | `build/three.module.min.js`, and from `examples/jsm/`: `loaders/GLTFLoader.js`, `controls/OrbitControls.js`, `utils/BufferGeometryUtils.js`. Unmodified. Used only by the viewer's 3D board view; nothing on the verdict path loads it (tests/no-model-in-verdict.test.mjs). Decided with the founder on 2026-11-22 (CONTRIBUTING rule 6). |
+

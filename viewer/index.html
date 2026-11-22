@@ -10,6 +10,9 @@
 <div id="app">
   <noscript>This viewer renders an event stream in the browser and needs JavaScript. The run data itself is plain JSONL.</noscript>
 </div>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/three.module.min.js" } }
+</script>
 <script type="module">
   import { bootstrap } from './app.mjs';
   bootstrap().catch(err => {

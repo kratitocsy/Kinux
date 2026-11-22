@@ -12,6 +12,7 @@
 //   * Everything else is a labelled placeholder that says what is missing.
 
 import { el, panelShell, section, kv, placeholder, shortHash } from '../dom.mjs';
+import { renderBoardViews } from './board.mjs';
 import { badgeFor } from '../reducer.mjs';
 import { thermalView } from '../thermal.mjs';
 
@@ -162,6 +163,11 @@ export function renderDesignPanel(state, ctx = {}) {
     ['Status', state.run.finished ? state.run.finished.status : 'in progress'],
   ])));
 
+  // The design itself, as KiCad drew it, when the run carries its views.
+  const boardViews = renderBoardViews(state, ctx);
+  if (boardViews) body.appendChild(boardViews);
+  const has3d = state.artifacts.some(a => a.test_id === 'design' && a.kind === 'mesh_glb');
+
   // Design elements the run actually touched. These are target strings from
   // mutation.result and fault.propose events — names, not a layout.
   const elements = new Map();
@@ -232,7 +238,7 @@ export function renderDesignPanel(state, ctx = {}) {
   if (thermal) body.appendChild(renderThermalSection(thermal, ctx, selection));
 
   body.appendChild(section('Not wired yet', [
-    placeholder('3D board / assembly view', [
+    has3d ? null : placeholder('3D board / assembly view', [
       'No 3D solver is connected. There is no mesh, no geometry and no camera in this build.',
       'The concept render shows a 3D multi-physics studio; this viewer deliberately shows nothing in its place rather than a drawing that would be mistaken for one.',
     ], { phase: 'Phase D — Three.js scene, GLB from STEP, picking by design-graph id (STEPS S4.1).' }),
