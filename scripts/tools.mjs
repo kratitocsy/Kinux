@@ -54,6 +54,7 @@ export const SUITES = {
   'pcb-erc-drc': ['kicad-cli'],
   'kicad-adapter': ['ngspice', 'kicad-cli'],
   'fea': ['ccx', 'gmsh'],
+  'render': ['blender', 'kicad-cli'],
 };
 
 /**
@@ -68,6 +69,8 @@ export const SUITES = {
 
 /** @type {ToolDef[]} */
 export const TOOLS = [
+  { id: 'blender', bin: 'blender', env: 'KINUX_BLENDER_BIN', args: ['--version'], workerPath: false,
+    version: t => /Blender\s+(\d+\.\d+(?:\.\d+)?)/.exec(t)?.[1] },
   { id: 'ngspice', bin: 'ngspice', env: 'KINUX_NGSPICE_BIN', args: ['--version'], workerPath: true,
     version: t => /ngspice[- ]*(\d+(?:\.\d+)*)/i.exec(t)?.[1] },
   { id: 'ccx', bin: 'ccx', env: 'KINUX_CCX_BIN', args: ['-v'], workerPath: true,

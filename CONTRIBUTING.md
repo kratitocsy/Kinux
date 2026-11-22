@@ -21,6 +21,8 @@ Tested on Ubuntu 24.04 with Node 22.23. Nothing has been run on macOS or Windows
 | Gmsh | 4.12.1 | the FEA tests |
 | Python 3 and MuJoCo | 3.13 and 4.0.1 | the motion tests |
 | Playwright and Chromium | 1.63 | the browser tests (optional) |
+| Blender (with `python3-numpy`) | 4.0.2 | `node engine/render.mjs` board renders (optional) |
+| KiCad 3D models (`kicad-packages3d`) | 10.0.8 | part bodies in the 3D board view (optional, ~3.3 GB) |
 
 On Ubuntu:
 
