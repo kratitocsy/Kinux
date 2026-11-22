@@ -77,7 +77,7 @@ test('MCP: --role designer exposes the design tools only, and an agent cannot to
     const init = await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '0' } });
     assert.match(init.result.instructions, /checks are fixed/i);
     const names = (await rpc('tools/list', {})).result.tools.map(t => t.name);
-    assert.deepEqual(names, ['kinux_design_brief', 'kinux_propose_edit', 'kinux_design_diff']);
+    assert.deepEqual(names, ['kinux_design_brief', 'kinux_propose_edit', 'kinux_design_wait', 'kinux_design_diff']);
     const brief = (await call('kinux_design_brief')).structuredContent;
     assert.deepEqual(brief.failing, ['V(out) between 2.49 and 2.50']);
     const r = (await call('kinux_propose_edit', { kind: 'value', ref: 'R3', value: '2M', why: 'output level' })).structuredContent;

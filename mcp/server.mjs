@@ -186,6 +186,8 @@ export const DESIGNER_TOOLS = [
       kind: { type: 'string', enum: ['value', 'model'] }, ref: { type: 'string', maxLength: 40 }, value: { type: 'string', maxLength: 40 },
       file: { type: 'string', maxLength: 80 }, subckt: { type: 'string', maxLength: 80 }, model: { type: 'string', maxLength: 80 },
       ports: { type: 'array', items: { type: 'string', maxLength: 8 }, maxItems: 16 }, why: { type: 'string', maxLength: 300 } } } },
+  { name: 'kinux_design_wait', description: `Wait up to ${WAIT_CAP_SECONDS} seconds for a pending brief or edit (by the id a call returned with status "pending"), then return its result, or "pending" again. A real design can take minutes to rebuild and re-check; never errors on timeout, call it again.`,
+    inputSchema: { type: 'object', properties: { id: { type: 'string', maxLength: 20 } }, additionalProperties: false } },
   { name: 'kinux_design_diff', description: 'What the session changed: a diff of the schematic and sidecar against the originals, every kept edit with its reason and the checks it fixed, and where the edited copy is. The person applies it; Kinux never writes the originals.', inputSchema: NO_ARGS },
 ];
 
@@ -419,11 +421,38 @@ export function createServer(opts, { log = () => {} } = {}) {
     return createDesignSession({ schematic: opts.design, sidecar: opts.sidecar, modelDir: opts['model-dir'], intent: opts.intent,
       suite: loadSuite(opts.checks), compat: opts['ngspice-compat'] ?? null });
   })());
+  // A real design takes minutes to rebuild and re-check; MCP clients give up on a tool call
+  // after about a minute. Long work runs as a job: a call that would outlast the cap returns
+  // "pending" with an id, and kinux_design_wait collects it.
+  const jobs = new Map();
+  let jobN = 0;
+  const asJob = async (work, waitMs = (WAIT_CAP_SECONDS - 5) * 1000) => {
+    const id = `J${++jobN}`;
+    const job = { done: false, value: undefined, error: null };
+    job.promise = work().then(v => { job.done = true; job.value = v; }, e => { job.done = true; job.error = e; });
+    jobs.set(id, job);
+    await Promise.race([job.promise, new Promise(r => setTimeout(r, waitMs))]);
+    if (!job.done) return { status: 'pending', id, note: 'Kinux is still rebuilding and re-checking the design. Call kinux_design_wait with this id.' };
+    jobs.delete(id);
+    if (job.error) throw job.error;
+    return job.value;
+  };
   const designerTools = {
-    kinux_design_brief: async () => (await getDesign()).brief(),
-    kinux_propose_edit: async (args = {}) => (await getDesign()).propose(args),
+    kinux_design_brief: () => asJob(async () => (await getDesign()).brief()),
+    kinux_propose_edit: (args = {}) => asJob(async () => (await getDesign()).propose(args)),
+    kinux_design_wait: async (args = {}) => {
+      const job = jobs.get(args.id);
+      if (!job) throw new ToolError('unknown_job', `no pending job ${args.id}; it may already have been collected`);
+      await Promise.race([job.promise, new Promise(r => setTimeout(r, (WAIT_CAP_SECONDS - 5) * 1000))]);
+      if (!job.done) return { status: 'pending', id: args.id, note: 'still working; call kinux_design_wait again' };
+      jobs.delete(args.id);
+      if (job.error) throw job.error;
+      return job.value;
+    },
     kinux_design_diff: async () => (await getDesign()).diff(),
   };
+  // Start preparing at launch: the first brief should not wait for the whole first build.
+  if ((opts.role ?? 'builder') === 'designer') getDesign().then(d => d.brief()).catch(() => {});
 
   const tools = {
     kinux_doctor: () => new Promise(res => {

@@ -15,6 +15,8 @@ simulated circuit, adds no ERC violation, breaks no passing check and makes at l
    - change as few parts as possible, and the cheapest one first;
    - a model swap {kind: model} only when the part itself must change (another diode, another LED),
      to a model file the brief lists.
+   A real design takes minutes to rebuild and re-check: a call may answer {status: "pending", id}.
+   Then call mcp__kinux-design__kinux_design_wait {id} until it answers; that is normal, not an error.
 3. Read every answer. kept: note what it fixed and every value that moved. regression: it broke a passing
    check; read which, and change course. fixes_nothing: it moved the right way but not far enough, or
    the wrong quantity: use the measured values to correct. no_effect: the simulation does not use that
