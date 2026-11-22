@@ -93,3 +93,15 @@ Kinux, not the agents, keeps it cohesive: one lease per region, a check only on 
 region owns, every check judged in one queue (it must pass the design, catch a surviving fault, and
 leave the whole suite passing with the global score not lower), and the suite written after every
 commit.
+
+## The designer: change the design, not the checks
+
+```bash
+claude mcp add kinux-design -- node /path/to/Kinux/mcp/server.mjs --role designer --design board.kicad_sch --sidecar board.sidecar.json --model-dir models --checks checks.md
+```
+
+Copy `mcp/commands/kinux-design.md` into `.claude/commands/` and run `/kinux-design`. The checks are
+fixed; the agent proposes value or model edits; Kinux applies each to a COPY of the project, rebuilds,
+re-runs every check and ERC, and keeps it only if it reaches the simulated circuit, adds no ERC
+violation, breaks no passing check and fixes at least one failing one. The result is a diff for a
+person to review and apply; the original files are never written.

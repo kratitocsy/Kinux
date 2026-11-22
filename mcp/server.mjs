@@ -169,6 +169,26 @@ export const TEAM_TOOLS = [
   { name: 'kinux_team_status', description: 'Every region\'s score, the global score, the suite\'s hash, and every commit (who, where, what it catches).', inputSchema: NO_ARGS },
 ];
 
+export const DESIGNER_CONTRACT = [
+  'You change the DESIGN so it meets its checks. The checks are fixed in this role: you cannot read, add, loosen or remove one.',
+  'Every edit happens in a copy of the KiCad project. Kinux keeps it only if it reaches the simulated circuit, adds no ERC violation, breaks no check that passed, and makes at least one failing check pass; otherwise the copy is put back.',
+  'State the requirement each edit serves (why). Prefer standard values (E24 for resistors, E12 for capacitors) and real parts. A person reviews the diff and applies it; say what you changed and why, with the numbers Kinux measured.',
+].join('\n');
+
+export const DESIGNER_TOOLS = [
+  { name: 'kinux_design_brief', description: 'The design and its checks as they stand in your copy: every check with its verdict and measured value (failing ones listed), every part with its value and how it is simulated, the simulated circuit, the model files you may switch a part to, ERC, and your edits so far.', inputSchema: NO_ARGS },
+  { name: 'kinux_propose_edit', description: [
+    'Propose ONE design edit; Kinux rebuilds and re-runs everything and keeps it or puts it back, saying why. Kinds:',
+    'value {ref, value, why}: set a part\'s Value (KiCad notation: 4k7, 2.2u, 100n).',
+    'model {ref, file, subckt|model, ports?, why}: simulate the part with another model from the model directory.',
+    'Returns kept (with the checks it fixed and every measured value that moved) or rejected (regression, fixes_nothing, erc, no_effect, refused).'].join(' '),
+    inputSchema: { type: 'object', additionalProperties: false, properties: {
+      kind: { type: 'string', enum: ['value', 'model'] }, ref: { type: 'string', maxLength: 40 }, value: { type: 'string', maxLength: 40 },
+      file: { type: 'string', maxLength: 80 }, subckt: { type: 'string', maxLength: 80 }, model: { type: 'string', maxLength: 80 },
+      ports: { type: 'array', items: { type: 'string', maxLength: 8 }, maxItems: 16 }, why: { type: 'string', maxLength: 300 } } } },
+  { name: 'kinux_design_diff', description: 'What the session changed: a diff of the schematic and sidecar against the originals, every kept edit with its reason and the checks it fixed, and where the edited copy is. The person applies it; Kinux never writes the originals.', inputSchema: NO_ARGS },
+];
+
 class ToolError extends Error {
   constructor(type, message, extra = {}) { super(message); this.type = type; this.extra = extra; }
 }
@@ -191,7 +211,8 @@ export function parseLaunchArgs(argv) {
     else opts[key] = value;
   }
   opts.role ??= 'builder';
-  if (!['builder', 'reviewer', 'villain', 'team'].includes(opts.role)) throw new Error('--role is builder, reviewer, villain or team');
+  if (!['builder', 'reviewer', 'villain', 'team', 'designer'].includes(opts.role)) throw new Error('--role is builder, reviewer, villain, team or designer');
+  if (opts.role === 'designer' && !/\.kicad_sch$/i.test(opts.design ?? '')) throw new Error('--role designer edits a KiCad design: --design must be a .kicad_sch');
   if (opts.regions !== undefined && !(/^\d+$/.test(opts.regions) && Number(opts.regions) >= 1 && Number(opts.regions) <= 32)) throw new Error('--regions must be a whole number from 1 to 32');
   for (const req of opts.role === 'reviewer' ? ['design'] : ['design', 'checks']) if (!opts[req]) throw new Error(`--${req} is required`);
   if (opts.budget !== undefined && !(/^\d+$/.test(opts.budget) && Number(opts.budget) >= 1 && Number(opts.budget) <= 1000)) throw new Error('--budget must be a whole number from 1 to 1000');
@@ -222,7 +243,7 @@ export function createServer(opts, { log = () => {} } = {}) {
   const summarise = (tool, r) => {
     if (!r || typeof r !== 'object') return {};
     const keep = ['run_id', 'state', 'score_text', 'status', 'reason', 'id', 'kind', 'error', 'message', 'verified', 'rejected', 'open', 'proposals',
-      'description', 'harm', 'harmful', 'killed_by', 'tried', 'killed', 'survived', 'code', 'region', 'check', 'global_after'];
+      'description', 'harm', 'harmful', 'killed_by', 'tried', 'killed', 'survived', 'code', 'region', 'check', 'global_after', 'why'];
     const out = Object.fromEntries(keep.filter(k => r[k] !== undefined).map(k => [k, typeof r[k] === 'string' ? r[k].slice(0, 300) : r[k]]));
     if (r.evidence?.measured !== undefined) out.measured = r.evidence.measured;
     if (r.evidence?.line !== undefined) out.cited_line = `${r.evidence.doc}:${r.evidence.line}`;
@@ -391,6 +412,19 @@ export function createServer(opts, { log = () => {} } = {}) {
     kinux_team_status: async () => (await getTeam()).status(),
   };
 
+  let designPromise = null;
+  const getDesign = () => (designPromise ??= (async () => {
+    const { createDesignSession } = await import('../engine/design-session.mjs');
+    const { loadSuite } = await import('../engine/cli.mjs');
+    return createDesignSession({ schematic: opts.design, sidecar: opts.sidecar, modelDir: opts['model-dir'], intent: opts.intent,
+      suite: loadSuite(opts.checks), compat: opts['ngspice-compat'] ?? null });
+  })());
+  const designerTools = {
+    kinux_design_brief: async () => (await getDesign()).brief(),
+    kinux_propose_edit: async (args = {}) => (await getDesign()).propose(args),
+    kinux_design_diff: async () => (await getDesign()).diff(),
+  };
+
   const tools = {
     kinux_doctor: () => new Promise(res => {
       execFile(process.execPath, [DOCTOR], { timeout: 30_000 }, (err, stdout, stderr) => {
@@ -493,8 +527,8 @@ export function createServer(opts, { log = () => {} } = {}) {
   };
 
   const role = opts.role ?? 'builder';
-  const toolset = role === 'reviewer' ? REVIEW_TOOLS : role === 'villain' ? VILLAIN_TOOLS : role === 'team' ? TEAM_TOOLS : TOOLS;
-  const impl = role === 'reviewer' ? reviewTools : role === 'villain' ? villainTools : role === 'team' ? teamTools : tools;
+  const toolset = { reviewer: REVIEW_TOOLS, villain: VILLAIN_TOOLS, team: TEAM_TOOLS, designer: DESIGNER_TOOLS }[role] ?? TOOLS;
+  const impl = { reviewer: reviewTools, villain: villainTools, team: teamTools, designer: designerTools }[role] ?? tools;
 
   function validateArgs(tool, args) {
     if (args === undefined || args === null) return {};
@@ -527,7 +561,7 @@ export function createServer(opts, { log = () => {} } = {}) {
     const { id, method, params } = msg;
     if (method === 'initialize') {
       return { protocolVersion: PROTOCOL_VERSION, capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'kinux', version: '0.1.0' }, instructions: role === 'reviewer' ? REVIEW_CONTRACT : role === 'villain' ? VILLAIN_CONTRACT : role === 'team' ? TEAM_CONTRACT : VERDICT_CONTRACT };
+        serverInfo: { name: 'kinux', version: '0.1.0' }, instructions: role === 'reviewer' ? REVIEW_CONTRACT : role === 'villain' ? VILLAIN_CONTRACT : role === 'team' ? TEAM_CONTRACT : role === 'designer' ? DESIGNER_CONTRACT : VERDICT_CONTRACT };
     }
     if (method === 'ping') return {};
     if (method === 'tools/list') return { tools: toolset.map(t => ({ ...t, _meta: { schemaVersion: SCHEMA_VERSION, role: opts.role } })) };

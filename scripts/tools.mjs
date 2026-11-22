@@ -60,6 +60,7 @@ export const SUITES = {
   'board-heat': ['ngspice', 'ccx'],
   'villain': ['ngspice'],
   'team': ['ngspice'],
+  'design-session': ['ngspice', 'kicad-cli'],
   'viewer-studio': ['ngspice', 'ccx', 'kicad-cli'],
 };
 
