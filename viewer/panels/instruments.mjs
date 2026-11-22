@@ -48,7 +48,8 @@ export function renderInstrumentsPanel(state, ctx = {}) {
 // --- measurements ----------------------------------------------------------
 
 function instMeasurements(state, selection, ctx) {
-  const series = measurementSeries(state);
+  // 'design' carries the design's own views (board panel), not a check.
+  const series = measurementSeries(state).filter(s => s.test_id !== 'design');
   const wrap = el('div', { class: 'charts', 'data-testid': 'measurement-charts' });
   if (series.length === 0) {
     wrap.appendChild(el('p', { class: 'muted', text: 'No tests have been queued in this run.' }));
@@ -131,21 +132,64 @@ function instWaveforms(state, ctx) {
   }
   for (const a of waves) {
     const data = samples[a.artifact_id];
+    const live = !(data && data.length) && ctx.artifactUrl && a.mime === 'application/json' ? liveWave(a, ctx) : null;
     items.push(el('div', { class: 'wave', 'data-artifact': a.artifact_id, 'data-testid': 'waveform' }, [
       el('div', { class: 'wave-head' }, [
         el('code', { text: a.artifact_id }),
         el('span', { class: 'muted', text: ` ${a.uri} · ${a.bytes} B · ${shortHash(a.sha256)}` }),
         el('span', { class: `prov prov-${a.provenance} prov-compact` }, [el('span', { class: 'prov-label', text: a.provenance.toUpperCase() })]),
       ]),
-      data && data.length
+      live ?? (data && data.length
         ? instTrace(data)
         : el('div', {
             class: 'wave-missing', 'data-testid': 'waveform-missing',
             text: 'Payload not loaded. The viewer has the artifact hash and size from the event, but not its samples, so no trace is drawn.',
-          }),
+          })),
     ]));
   }
   return section('Waveforms', items);
+}
+
+// Live or replayed runs: fetch the waveform payload (engine/waveforms.mjs) once,
+// keep the drawn element across re-renders, and draw every series against time.
+const waveCache = new Map();
+const WAVE_COLORS = ['#4c7bd9', '#e0883b', '#2f9e5b', '#c2417a', '#8a63d2', '#2fa4a4', '#b7791f', '#8a8f98'];
+function liveWave(a, ctx) {
+  if (waveCache.has(a.sha256)) return waveCache.get(a.sha256);
+  const holder = el('div', { class: 'wave-live', 'data-testid': 'waveform-loading' }, [el('span', { class: 'muted', text: 'Loading samples…' })]);
+  waveCache.set(a.sha256, holder);
+  fetch(ctx.artifactUrl(a)).then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))).then(p => {
+    holder.dataset.testid = 'waveform-live';
+    holder.replaceChildren(instTraceMulti(p), el('p', { class: 'muted wave-note', text:
+      `${p.solver}${p.ngspice_compat ? ` (${p.ngspice_compat} mode)` : ''}, original design, ${p.analysis}; ${p.points} points${p.decimated ? `, drawn as ${p.x.values.length} (each bucket's minimum and maximum kept)` : ''}.` }));
+  }).catch(e => holder.replaceChildren(el('span', { class: 'muted', text: `Samples could not be loaded: ${e.message}` })));
+  return holder;
+}
+
+function instTraceMulti(p) {
+  const W = 420, H = 150, L = 40, R = 8, T = 8, B = 30;
+  const xs = p.x.values;
+  let min = Infinity, max = -Infinity;
+  for (const s of p.series) for (const v of s.values) { if (v < min) min = v; if (v > max) max = v; }
+  if (!(max > min)) { min -= 1; max += 1; }
+  const x0 = xs[0], x1 = xs[xs.length - 1] > x0 ? xs[xs.length - 1] : x0 + 1;
+  const x = t => L + ((t - x0) / (x1 - x0)) * (W - L - R);
+  const y = v => T + (1 - (v - min) / (max - min)) * (H - T - B);
+  const paths = p.series.map((s, k) => {
+    let d = '';
+    for (let i = 0; i < xs.length; i++) d += `${i ? 'L' : 'M'} ${x(xs[i]).toFixed(2)} ${y(s.values[i]).toFixed(2)} `;
+    return svgEl('path', { d: d.trim(), class: 'trace-line', stroke: WAVE_COLORS[k % WAVE_COLORS.length], fill: 'none' });
+  });
+  const legend = p.series.map((s, k) => svgEl('text', { x: L + 4 + k * 70, y: H - 4, class: 'tick', fill: WAVE_COLORS[k % WAVE_COLORS.length], text: s.name }));
+  return svgEl('svg', { class: 'trace', viewBox: `0 0 ${W} ${H}`, width: '100%', height: H, 'data-testid': 'waveform-trace' }, [
+    svgEl('line', { x1: L, y1: H - B, x2: W - R, y2: H - B, class: 'axis' }),
+    svgEl('line', { x1: L, y1: T, x2: L, y2: H - B, class: 'axis' }),
+    svgEl('text', { x: 2, y: T + 8, class: 'tick', text: `${fmtNum(max, 2)} ${p.series[0]?.unit ?? ''}` }),
+    svgEl('text', { x: 2, y: H - B, class: 'tick', text: fmtNum(min, 2) }),
+    svgEl('text', { x: L, y: H - B + 12, class: 'tick', text: `${fmtNum(x0, 3)} s` }),
+    svgEl('text', { x: W - R - 50, y: H - B + 12, class: 'tick', text: `${fmtNum(x1, 3)} s` }),
+    ...paths, ...legend,
+  ]);
 }
 
 function instTrace(data) {

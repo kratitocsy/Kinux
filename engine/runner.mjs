@@ -363,6 +363,8 @@ export async function runVerification(options) {
     cache = null,
     stopOnKill = false,
     designViews = [],
+    waveformsDir = null,
+    onArtifactBytes = null,
     useQueue = true,
     queuePath = ':memory:',
     onEvent,
@@ -402,6 +404,19 @@ export async function runVerification(options) {
   }
   for (const r of baseline.results) stream.result(r);
   const gate = new BaselineGate(baseline.results);
+
+  // Waveforms of the original design, for people (engine/waveforms.mjs): one
+  // more solve per transient block, recording the nets the block looks at.
+  if (waveformsDir) {
+    const { captureWaveforms } = await import('./waveforms.mjs');
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    for (const w of await captureWaveforms(netlist, suite, { compat, timeoutMs, outDir: waveformsDir })) {
+      if (onArtifactBytes) onArtifactBytes(readFileSync(join(waveformsDir, w.file)));
+      stream.emit('test.artifact', { test_id: w.test_id, artifact_id: w.artifact_id, kind: w.kind, uri: `waves/${w.file}`,
+        sha256: w.sha256, bytes: w.bytes, mime: w.mime }, { kind: 'solver', id: 'ngspice-worker' });
+    }
+  }
 
   // --- 2. Mutants. ---------------------------------------------------------
   const generated = [];

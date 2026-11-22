@@ -59,6 +59,8 @@ export const USAGE = `kinux verify -- mutation-test a circuit's check suite
   --timeout <ms>      per-simulation timeout (default 20000)
   --cache <file>      reuse ngspice results across runs (SQLite). The key is the exact
                       deck, the ngspice version and the compat mode; results do not change
+  --waveforms         record the original design's waveforms for every transient block
+                      (one more solve per block; on by default with --serve)
   --stop-on-kill      run each mutant's blocks cheapest first and stop once it is killed;
                       killed/survived are unchanged, killed mutants carry fewer results
   --jobs <n>          run up to n mutants at once (default 1); results and events
@@ -77,7 +79,7 @@ export const USAGE = `kinux verify -- mutation-test a circuit's check suite
 
 /** Parse argv into an options object. Pure, so the tests can use it. */
 export function parseArgs(argv) {
-  const out = { command: null, design: null, checks: null, out: 'kinux-run', threshold: 0.7, limit: Infinity, operators: null, runId: null, project: null, useQueue: true, timeoutMs: undefined, compat: null, jobs: 1, cache: null, stopOnKill: false, json: false, quiet: false, help: false, serve: false, port: 0, thermalModel: null, sidecar: null, modelDir: null, intent: null };
+  const out = { command: null, design: null, checks: null, out: 'kinux-run', threshold: 0.7, limit: Infinity, operators: null, runId: null, project: null, useQueue: true, timeoutMs: undefined, compat: null, jobs: 1, cache: null, stopOnKill: false, waveforms: false, json: false, quiet: false, help: false, serve: false, port: 0, thermalModel: null, sidecar: null, modelDir: null, intent: null };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -113,6 +115,7 @@ export function parseArgs(argv) {
       case '--jobs': out.jobs = Number(next()); break;
       case '--cache': out.cache = next(); break;
       case '--stop-on-kill': out.stopOnKill = true; break;
+      case '--waveforms': out.waveforms = true; break;
       case '--json': out.json = true; break;
       case '--quiet': out.quiet = true; break;
       default:
@@ -280,6 +283,9 @@ export async function main(argv, io = {}) {
       cache,
       stopOnKill: opts.stopOnKill,
       designViews,
+      // Waveforms cost one more solve per transient block; on when asked, and when a person is watching.
+      waveformsDir: opts.waveforms || opts.serve ? join(resolve(opts.out), 'waves') : null,
+      onArtifactBytes: live ? buf => live.server.store.putArtifact(buf) : null,
     });
   } catch (e) {
     err(`the run could not start: ${e.message}`);
