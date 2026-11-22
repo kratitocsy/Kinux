@@ -328,13 +328,16 @@ export function createTeam({ netlist: netlistText, suite: rawSuite, compat = nul
     if (!br || br.verdict !== 'PASS') return reject('fails_design', `the design as drawn gives ${br?.verdict ?? 'nothing'}${br?.measured !== undefined ? ` (measured ${br.measured})` : ''}${br?.reason ? `: ${br.reason}` : ''}. A check the design fails catches nothing; if the design is wrong, that is for a person.`, { measured: br?.measured ?? null });
     // 4. It must catch at least one of the region's survivors.
     // An interface net (a rail) sees the whole board: the lead's checks may catch any region's survivors.
-    const targets = state.mutants.filter(m => (region === 'interfaces' || m.region === region) && m.status === 'survived');
+    // Faults not caught yet: survivors, and faults no check could judge so far (a new block can make
+    // them checkable, so they are judged too; leaving them out made the team under-count).
+    const OPEN = new Set(['survived', 'not_checked', 'error']);
+    const targets = state.mutants.filter(m => (region === 'interfaces' || m.region === region) && OPEN.has(m.status));
     const hits = await pool(targets, jobs, async m => {
       const r = await verifySimulation(m.text, one, { subject: m.mutant_id, testIdPrefix: `${suite.id}:${b.prefix}`, compat, timeoutMs });
       return { m, r: r.results[0] };
     });
     const kills = hits.filter(h => h.r?.verdict === 'FAIL');
-    if (!kills.length) return reject('catches_nothing', `it passes on all ${targets.length} of region ${region}'s surviving faults`, { measured: br.measured });
+    if (!kills.length) return reject('catches_nothing', `it catches none of the ${targets.length} faults region ${region} has not caught yet`, { measured: br.measured });
     // 5. Integrate: commit the check, re-run the whole suite on the design, and re-judge the faults it caught.
     const before = scoreOf(state.mutants);
     const prevBlocks = suite.blocks;
@@ -349,6 +352,7 @@ export function createTeam({ netlist: netlistText, suite: rawSuite, compat = nul
     const gate = new BaselineGate(again.results);
     for (const { m, r } of hits) {
       // The single-check run numbers it k1; in the suite it has the id the full run gave it.
+      // Every judged fault keeps its result, caught or not, so a later check sees the same evidence a fresh run would.
       if (r) m.results.set(newBase.test_id, { ...r, test_id: newBase.test_id });
       const cls = classifyMutant(gate, [...m.results.values()]);
       m.status = cls.status; m.killed_by = cls.killed_by;
