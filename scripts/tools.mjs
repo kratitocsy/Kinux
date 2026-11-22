@@ -48,6 +48,7 @@ export const SUITES = {
   'viewer-board': ['ngspice', 'kicad-cli'],
   'waveforms': ['ngspice'],
   'viewer-activity': [],
+  'viewer-heat': ['ngspice'],
   'examples': ['ngspice'],
   'thermal': ['ngspice'],
   'live': ['ngspice'],

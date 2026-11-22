@@ -9,9 +9,41 @@
 // redrawn.
 
 import { el, svgEl, section } from '../dom.mjs';
+import { thermalView } from '../thermal.mjs';
 
 const cache = new Map();
 let activeTab = null;
+let colourBy = 'result';
+
+/**
+ * Per-part temperatures from the run's thermal checks (the lumped thermal
+ * worker): the baseline's, or a selected mutant's. One number per part, never a
+ * field. Returns null when the run has no temperature to show.
+ */
+export function partTemperatures(state, selection = new Set()) {
+  const view = thermalView(state, selection);
+  if (!view) return null;
+  const temps = new Map();
+  let subject = 'baseline';
+  for (const c of view.components) {
+    const row = c.rows.find(r => r.quantity === 'T');
+    if (!row) continue;
+    const pick = row.selected && row.selected.measured !== null ? row.selected : row.baseline;
+    if (!pick || pick.measured === null || pick.measured === undefined) continue;
+    if (pick === row.selected) subject = 'selected mutant';
+    temps.set(c.component, pick.measured);
+  }
+  if (!temps.size) return null;
+  const values = [...temps.values()];
+  return { temps, min: Math.min(...values), max: Math.max(...values), subject, models: view.models };
+}
+
+/** Blue (coolest) to red (hottest), as a CSS colour and as 0..1 RGB. */
+export function heatColour(t, min, max) {
+  const f = max > min ? (t - min) / (max - min) : 1;
+  const r = Math.round(60 + 195 * f), g = Math.round(110 - 60 * f), b = Math.round(230 - 190 * f);
+  return { css: `rgb(${r},${g},${b})`, rgb: [r / 255, g / 255, b / 255] };
+}
 
 const STATUS_RANK = { survived: 0, error: 1, not_checked: 2, killed: 3, equivalent: 4 };
 const STATUS_COLOR = { survived: '#d64545', error: '#b7791f', not_checked: '#8a8f98', killed: '#2f9e5b', equivalent: '#6b7280', none: '#4c7bd9' };
@@ -37,18 +69,24 @@ function fetchOnce(key, url, as) {
   return cache.get(key);
 }
 
-function marker2d(p, status, selected, onSelect, unit = 1) {
-  const color = STATUS_COLOR[status ?? 'none'];
+function marker2d(p, status, selected, onSelect, unit = 1, heat = null) {
+  const color = heat ? heat.css : STATUS_COLOR[status ?? 'none'];
   const g = svgEl('g', { class: `bv-marker${selected ? ' selected' : ''}`, 'data-ref': p.ref, 'data-testid': 'bv-marker', 'data-status': status ?? 'none',
     'data-selected': selected ? 'true' : 'false' }, [
     svgEl('circle', { cx: p.x, cy: p.y, r: (selected ? 1.5 : 1) * unit, fill: color, 'fill-opacity': selected ? 0.45 : 0.25, stroke: color, 'stroke-width': (selected ? 0.35 : 0.2) * unit }),
-    svgEl('text', { x: p.x + 1.2 * unit, y: p.y - 1.2 * unit, 'font-size': unit, fill: color, 'font-family': 'sans-serif', text: p.ref }),
+    svgEl('text', { x: p.x + 1.2 * unit, y: p.y - 1.2 * unit, 'font-size': unit, fill: color, 'font-family': 'sans-serif', text: heat ? `${p.ref} ${heat.label}` : p.ref }),
   ]);
   g.addEventListener('click', () => onSelect && onSelect(p.ref));
   return g;
 }
 
-function view2d(key, url, parts, status, selection, ctx, label) {
+function heatFor(ref, thermal) {
+  if (!thermal || !thermal.temps.has(ref)) return null;
+  const t = thermal.temps.get(ref);
+  return { ...heatColour(t, thermal.min, thermal.max), label: `${t.toFixed(1)} °C` };
+}
+
+function view2d(key, url, parts, status, selection, ctx, label, thermal = null) {
   let entry = cache.get(`${key}:node`);
   if (!entry) {
     const img = el('img', { class: 'bv-img', alt: label });
@@ -70,14 +108,15 @@ function view2d(key, url, parts, status, selection, ctx, label) {
     }).catch(e => stage.replaceChildren(el('p', { class: 'muted', text: `${label} could not be loaded: ${e.message}` })));
   }
   entry.redraw = () => {
-    entry.overlay.replaceChildren(...parts.map(p => marker2d(p, status.get(p.ref), selection.has(p.ref), ctx.onSelect, entry.unit ?? 2.6)));
+    const shown = thermal ? parts.filter(p => thermal.temps.has(p.ref)) : parts;
+    entry.overlay.replaceChildren(...shown.map(p => marker2d(p, status.get(p.ref), selection.has(p.ref), ctx.onSelect, entry.unit ?? 2.6, heatFor(p.ref, thermal))));
     entry.stage.dataset.ready = entry.ready ? 'true' : 'false';
   };
   entry.redraw();
   return entry.stage;
 }
 
-function view3d(url, parts, status, selection, ctx) {
+function view3d(url, parts, status, selection, ctx, thermal = null) {
   let entry = cache.get('board3d:node');
   if (!entry) {
     const stage = el('div', { class: 'bv-stage bv-3d', 'data-testid': 'bv-board3d', 'data-ready': 'false' },
@@ -149,32 +188,37 @@ function view3d(url, parts, status, selection, ctx) {
         stage.dataset.bodies = String(bodies.size);
         stage.replaceChildren(renderer.domElement);
         stage.dataset.ready = 'true';
-        entry.redraw = (st, sel) => {
+        entry.redraw = (st, sel, th) => {
           for (const [ref, meshes] of bodies) {
             const on = sel.has(ref);
-            const status = st.get(ref);
+            const heat = th ? heatFor(ref, th) : null;
+            const status = th ? null : st.get(ref);
+            const colour = heat ? heat.css : status ? STATUS_COLOR[status] : null;
             for (const m of meshes) {
               if (!m.material.emissive) continue;
               // A tint, not a repaint: the part keeps KiCad's own colours underneath.
-              m.material.emissive.set(status ? STATUS_COLOR[status] : 0x000000);
-              m.material.emissiveIntensity = on ? 0.9 : status ? 0.45 : 0;
+              m.material.emissive.set(colour ?? 0x000000);
+              m.material.emissiveIntensity = on ? 0.9 : colour ? 0.45 : 0;
             }
           }
           for (const [ref, m] of entry.markers) {
             const on = sel.has(ref);
-            m.material.color.set(STATUS_COLOR[st.get(ref) ?? 'none']);
+            const heat = th ? heatFor(ref, th) : null;
+            m.visible = !th || Boolean(heat);
+            m.material.color.set(heat ? heat.css : STATUS_COLOR[st.get(ref) ?? 'none']);
             m.material.emissive.set(on ? 0x666666 : 0x000000);
             m.scale.setScalar(on ? 1.8 : 1);
           }
           draw();
         };
-        entry.redraw(entry.lastStatus ?? new Map(), entry.lastSelection ?? new Set());
+        entry.redraw(entry.lastStatus ?? new Map(), entry.lastSelection ?? new Set(), entry.lastThermal ?? null);
       })
       .catch(e => stage.replaceChildren(el('p', { class: 'muted', text: `The 3D board could not be shown: ${e.message}` })));
   }
   entry.lastStatus = status;
   entry.lastSelection = selection;
-  entry.redraw(status, selection);
+  entry.lastThermal = thermal;
+  entry.redraw(status, selection, thermal);
   return entry.stage;
 }
 
@@ -189,6 +233,9 @@ export function renderBoardViews(state, ctx) {
   const holder = el('div', { class: 'bv-holder' });
   const status = partStatus(state);
   const selection = ctx.selection ?? new Set();
+  const temps = partTemperatures(state, selection);
+  if (!temps) colourBy = 'result';
+  const thermal = colourBy === 'temperature' ? temps : null;
   const tabs = [
     views.schematic && ['schematic', 'Schematic'],
     views.pcb && ['pcb', 'PCB'],
@@ -198,9 +245,9 @@ export function renderBoardViews(state, ctx) {
   const show = () => {
     holder.replaceChildren(el('p', { class: 'muted', text: 'Loading part positions…' }));
     fetchOnce('parts', url(views.parts), 'json').then(parts => {
-      if (activeTab === 'schematic') holder.replaceChildren(view2d('schematic', url(views.schematic), parts.schematic, status, selection, ctx, 'Schematic'));
-      else if (activeTab === 'pcb') holder.replaceChildren(view2d('pcb', url(views.pcb), parts.pcb, status, selection, ctx, 'PCB'));
-      else if (activeTab === 'board3d') holder.replaceChildren(view3d(url(views.board3d), parts.board3d, status, selection, ctx));
+      if (activeTab === 'schematic') holder.replaceChildren(view2d('schematic', url(views.schematic), parts.schematic, status, selection, ctx, 'Schematic', thermal));
+      else if (activeTab === 'pcb') holder.replaceChildren(view2d('pcb', url(views.pcb), parts.pcb, status, selection, ctx, 'PCB', thermal));
+      else if (activeTab === 'board3d') holder.replaceChildren(view3d(url(views.board3d), parts.board3d, status, selection, ctx, thermal));
     }).catch(e => holder.replaceChildren(el('p', { class: 'muted', text: `Part positions could not be loaded: ${e.message}` })));
   };
   const bar = el('div', { class: 'bv-tabs', role: 'tablist' }, tabs.map(([k, label]) => el('button', {
@@ -209,10 +256,18 @@ export function renderBoardViews(state, ctx) {
     onclick: () => { activeTab = k; for (const b of bar.children) { b.classList.toggle('active', b.dataset.tab === k); b.setAttribute('aria-selected', b.dataset.tab === k ? 'true' : 'false'); } show(); },
   }, [label])));
   show();
-  const legend = el('p', { class: 'muted bv-legend' }, [
+  const colourBar = temps ? el('div', { class: 'bv-tabs', role: 'group', 'data-testid': 'bv-colour-by' }, [['result', 'Colour: run result'], ['temperature', 'Colour: temperature']].map(([k, label]) =>
+    el('button', { type: 'button', class: `bv-tab${k === colourBy ? ' active' : ''}`, 'data-colour': k, 'data-testid': `bv-colour-${k}`,
+      onclick: () => { colourBy = k; ctx.rerender?.(); } }, [label]))) : null;
+  const heatLegend = thermal ? el('p', { class: 'muted bv-legend', 'data-testid': 'bv-heat-legend' }, [
+    `Temperature per part from the lumped thermal model (${thermal.subject}): blue ${thermal.min.toFixed(1)} °C to red ${thermal.max.toFixed(1)} °C. `,
+    'One number per part, computed from the currents ngspice measured; there is no field between parts, so none is drawn. Parts without a thermal check are not coloured.',
+    thermal.models.length ? ` Model: ${thermal.models.join('; ')}` : '',
+  ]) : null;
+  const legend = thermal ? heatLegend : el('p', { class: 'muted bv-legend' }, [
     'Drawn by KiCad (kicad-cli); markers by Kinux, coloured by the worst mutant on each part: ',
     ...['survived', 'killed', 'not_checked', 'none'].flatMap(s => [el('span', { class: 'bv-swatch', style: `background:${STATUS_COLOR[s]}` }), ` ${s === 'none' ? 'no mutant' : s.replace('_', ' ')}  `]),
     views.board3d ? 'In 3D, part bodies are tinted by the same colours; parts without a 3D model keep a marker.' : '',
   ]);
-  return section('Board views', [bar, holder, legend], { 'data-testid': 'board-views' });
+  return section('Board views', [bar, colourBar, holder, legend], { 'data-testid': 'board-views' });
 }

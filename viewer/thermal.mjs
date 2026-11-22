@@ -16,7 +16,9 @@
 //   test.result   measured / limit numeric, units "°C" or "W", reason names the model
 
 /** T(RSH) < 125 · P(RSH) < 2 · T(Q2) between 20 and 125 */
-const THERMAL_TITLE_RE = /^\s*([TP])\(\s*([^()\s]+)\s*\)\s*(<=|>=|<|>|between)\s*(-?[0-9.]+(?:e-?\d+)?)\s*(?:and\s*(-?[0-9.]+(?:e-?\d+)?))?/i;
+// The thermal worker's grammar: `T(ref) [at <t>] (between a and b | < x | > x | < rated)`
+// (workers/thermal/assertions.mjs). `rated` takes the part's own limit from the model.
+const THERMAL_TITLE_RE = /^\s*([TP])\(\s*([^()\s]+)\s*\)\s*(?:at\s+(-?[0-9.]+(?:e-?\d+)?[a-z]*)\s+)?(<=|>=|<|>|between)\s*(-?[0-9.]+(?:e-?\d+)?|rated)\s*(?:and\s*(-?[0-9.]+(?:e-?\d+)?))?/i;
 
 const THERMAL_PROVENANCE_RANK = { synthetic: 0, recorded: 1, real: 2 };
 
@@ -25,17 +27,22 @@ export function parseThermalTitle(title) {
   const m = THERMAL_TITLE_RE.exec(String(title ?? ''));
   if (!m) return null;
   const quantity = m[1].toUpperCase();
-  const op = m[3].toLowerCase();
-  const a = Number(m[4]);
-  const b = m[5] !== undefined ? Number(m[5]) : null;
+  const op = m[4].toLowerCase();
+  const rated = /^rated$/i.test(m[5]);
+  if (rated && op !== '<') return null;
+  const a = rated ? null : Number(m[5]);
+  const b = m[6] !== undefined ? Number(m[6]) : null;
   if (op === 'between' && b === null) return null;
-  return {
+  const out = {
     quantity,                         // 'T' or 'P'
     component: m[2],
     op,                               // '<', '<=', '>', '>=', 'between'
     lo: op === 'between' ? Math.min(a, b) : (op === '>' || op === '>=' ? a : null),
     hi: op === 'between' ? Math.max(a, b) : (op === '<' || op === '<=' ? a : null),
   };
+  if (rated) out.rated = true;        // the limit is the part's rating, carried by the result
+  if (m[3] !== undefined) out.at = m[3];
+  return out;
 }
 
 /**

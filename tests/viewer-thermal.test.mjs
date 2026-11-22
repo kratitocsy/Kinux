@@ -73,7 +73,10 @@ test('titles parse into quantity, part and bounds; anything else is refused', ()
   assert.deepEqual(parseThermalTitle('T(RSH) < 125'), { quantity: 'T', component: 'RSH', op: '<', lo: null, hi: 125 });
   assert.deepEqual(parseThermalTitle('P(Q2) > 0.1'), { quantity: 'P', component: 'Q2', op: '>', lo: 0.1, hi: null });
   assert.deepEqual(parseThermalTitle('T(U1) between 20 and 85'), { quantity: 'T', component: 'U1', op: 'between', lo: 20, hi: 85 });
-  for (const bad of ['V(out) < 3', 'board stays cool', 'T(RSH)', 'T(RSH) between 20', '', null]) {
+  // The worker's other two forms, as real thermal suites write them.
+  assert.deepEqual(parseThermalTitle('T(RSH) < rated'), { quantity: 'T', component: 'RSH', op: '<', lo: null, hi: null, rated: true });
+  assert.deepEqual(parseThermalTitle('T(RSH) at 5 < 75'), { quantity: 'T', component: 'RSH', op: '<', lo: null, hi: 75, at: '5' });
+  for (const bad of ['V(out) < 3', 'board stays cool', 'T(RSH)', 'T(RSH) between 20', 'T(RSH) > rated', '', null]) {
     assert.equal(parseThermalTitle(bad), null, `${bad} is not a thermal title`);
   }
 });

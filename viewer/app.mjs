@@ -29,7 +29,7 @@ export function createViewer(root, { waveforms = {}, onSelect, artifactUrl = nul
   function render() {
     if (!state) return;
     const selection = expandSelection(state, selectedId);
-    const ctx = { selection, selectedId, onSelect: select, waveforms, artifactUrl, activityUrl };
+    const ctx = { selection, selectedId, onSelect: select, waveforms, artifactUrl, activityUrl, rerender: () => render() };
 
     clear(titlebar);
     const overall = badgeFor(state, 'overall');
