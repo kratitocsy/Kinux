@@ -59,6 +59,7 @@ export const SUITES = {
   'render': ['blender', 'kicad-cli'],
   'board-heat': ['ngspice', 'ccx'],
   'villain': ['ngspice'],
+  'team': ['ngspice'],
   'viewer-studio': ['ngspice', 'ccx', 'kicad-cli'],
 };
 

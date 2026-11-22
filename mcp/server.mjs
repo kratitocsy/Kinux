@@ -39,7 +39,7 @@
 import { spawn, execFile } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, mkdtempSync, mkdirSync, appendFileSync } from 'node:fs';
+import { existsSync, readFileSync, mkdtempSync, mkdirSync, appendFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -144,6 +144,25 @@ export const VILLAIN_TOOLS = [
   { name: 'kinux_villain_report', description: 'The faults tried so far: counts, and the missed faults ranked by harm, each with the net and numbers that show it.', inputSchema: NO_ARGS },
 ];
 
+export const TEAM_CONTRACT = [
+  'Kinux has split this design into regions that meet at interface nets (the supply rails, ground, busy nets), the way a finite-element solver splits a model into elements.',
+  'A lead claims each region (kinux_team_claim) and gives its lease to exactly ONE region agent. Only that agent can add checks there, and only checks that measure its own region. Interfaces belong to the lead.',
+  'Every proposed check goes through one queue: it must parse, belong to the proposer\'s region, PASS on the design as drawn, catch at least one of the region\'s surviving faults, and leave the whole suite passing with the global score not lower. Only then is it committed.',
+  'A check the design fails is not added: report it to the person as a possible design problem, with the measured value Kinux returned. Never loosen a limit just to get a check in.',
+].join('\n');
+
+export const TEAM_TOOLS = [
+  { name: 'kinux_team_partition', description: 'The decomposition: every region with its parts, the nets it owns, its faults and current score, who holds its lease; the interface nets; the global score.', inputSchema: NO_ARGS },
+  { name: 'kinux_team_claim', description: 'Claim a region and get its lease. One lease per region: give it to the one agent working there.',
+    inputSchema: { type: 'object', properties: { region: { type: 'string', maxLength: 20 }, agent: { type: 'string', maxLength: 40 } }, additionalProperties: false } },
+  { name: 'kinux_region_brief', description: 'One region in depth: its parts and values, what you may measure (V of its nets, I of its parts), the blocks you can add a check to (analysis and sources), the design\'s baseline measurements, the checks already in the region, and its surviving faults: your target.',
+    inputSchema: { type: 'object', properties: { region: { type: 'string', maxLength: 20 } }, additionalProperties: false } },
+  { name: 'kinux_propose_check', description: 'Propose ONE check line (the suite grammar, e.g. "V(NET) between 2.3 and 2.45" or "I(R4) between 2.7m and 3.3m") into one block, with your region and lease. Kinux judges it at once in the shared queue: committed (with the faults it now catches and the new scores) or rejected with the reason.',
+    inputSchema: { type: 'object', properties: { region: { type: 'string', maxLength: 20 }, lease: { type: 'string', maxLength: 40 }, block: { type: 'string', maxLength: 10 },
+      check: { type: 'string', maxLength: 200 }, agent: { type: 'string', maxLength: 40 } }, additionalProperties: false } },
+  { name: 'kinux_team_status', description: 'Every region\'s score, the global score, the suite\'s hash, and every commit (who, where, what it catches).', inputSchema: NO_ARGS },
+];
+
 class ToolError extends Error {
   constructor(type, message, extra = {}) { super(message); this.type = type; this.extra = extra; }
 }
@@ -152,8 +171,8 @@ class ToolError extends Error {
 export function parseLaunchArgs(argv) {
   const opts = {};
   const known = new Set(['design', 'checks', 'sidecar', 'model-dir', 'thermal-model', 'runs-dir', 'intent', 'ngspice-compat', 'jobs', 'cache', 'call-log',
-    'role', 'doc', 'review-log', 'villain-log', 'budget']);
-  const literal = new Set(['ngspice-compat', 'jobs', 'role', 'budget']);
+    'role', 'doc', 'review-log', 'villain-log', 'budget', 'regions', 'suite-out']);
+  const literal = new Set(['ngspice-compat', 'jobs', 'role', 'budget', 'regions']);
   for (let i = 0; i < argv.length; i += 2) {
     const flag = argv[i];
     if (!flag?.startsWith('--') || !known.has(flag.slice(2)) || argv[i + 1] === undefined) {
@@ -161,11 +180,13 @@ export function parseLaunchArgs(argv) {
     }
     const key = flag.slice(2);
     const value = literal.has(key) ? argv[i + 1] : resolve(argv[i + 1]);
+    if (key === 'suite-out' && existsSync(value) && !/\.md$/i.test(value)) throw new Error('--suite-out must be a .md file');
     if (key === 'doc') (opts.doc ??= []).push(value);
     else opts[key] = value;
   }
   opts.role ??= 'builder';
-  if (!['builder', 'reviewer', 'villain'].includes(opts.role)) throw new Error('--role is builder, reviewer or villain');
+  if (!['builder', 'reviewer', 'villain', 'team'].includes(opts.role)) throw new Error('--role is builder, reviewer, villain or team');
+  if (opts.regions !== undefined && !(/^\d+$/.test(opts.regions) && Number(opts.regions) >= 1 && Number(opts.regions) <= 32)) throw new Error('--regions must be a whole number from 1 to 32');
   for (const req of opts.role === 'reviewer' ? ['design'] : ['design', 'checks']) if (!opts[req]) throw new Error(`--${req} is required`);
   if (opts.budget !== undefined && !(/^\d+$/.test(opts.budget) && Number(opts.budget) >= 1 && Number(opts.budget) <= 1000)) throw new Error('--budget must be a whole number from 1 to 1000');
   for (const d of opts.doc ?? []) if (!existsSync(d)) throw new Error(`--doc ${d} does not exist`);
@@ -195,7 +216,7 @@ export function createServer(opts, { log = () => {} } = {}) {
   const summarise = (tool, r) => {
     if (!r || typeof r !== 'object') return {};
     const keep = ['run_id', 'state', 'score_text', 'status', 'reason', 'id', 'kind', 'error', 'message', 'verified', 'rejected', 'open', 'proposals',
-      'description', 'harm', 'harmful', 'killed_by', 'tried', 'killed', 'survived'];
+      'description', 'harm', 'harmful', 'killed_by', 'tried', 'killed', 'survived', 'code', 'region', 'check', 'global_after'];
     const out = Object.fromEntries(keep.filter(k => r[k] !== undefined).map(k => [k, typeof r[k] === 'string' ? r[k].slice(0, 300) : r[k]]));
     if (r.evidence?.measured !== undefined) out.measured = r.evidence.measured;
     if (r.evidence?.line !== undefined) out.cited_line = `${r.evidence.doc}:${r.evidence.line}`;
@@ -320,6 +341,37 @@ export function createServer(opts, { log = () => {} } = {}) {
     kinux_villain_report: async () => (await getVillain()).report(),
   };
 
+  let teamPromise = null;
+  const getTeam = () => (teamPromise ??= (async () => {
+    const { createTeam } = await import('../engine/team.mjs');
+    const { loadSuite } = await import('../engine/cli.mjs');
+    let netlist;
+    if (/\.kicad_sch$/i.test(opts.design)) {
+      const { buildDesign } = await import('../engine/kicad-adapter.mjs');
+      netlist = (await buildDesign({ schematic: opts.design, sidecar: opts.sidecar, modelDir: opts['model-dir'], intent: opts.intent })).netlist;
+    } else netlist = readFileSync(opts.design, 'utf8');
+    const t = createTeam({ netlist, suite: loadSuite(opts.checks), compat: opts['ngspice-compat'] ?? null, k: Number(opts.regions ?? 6), jobs: Number(opts.jobs ?? 4) });
+    await t.partition();
+    return t;
+  })());
+  const teamErr = async fn => {
+    const { TeamError } = await import('../engine/team.mjs');
+    try { return await fn(); } catch (e) { if (e instanceof TeamError) throw new ToolError('refused', e.message); throw e; }
+  };
+  const teamTools = {
+    kinux_team_partition: async () => (await getTeam()).partition(),
+    kinux_team_claim: async (args = {}) => teamErr(async () => (await getTeam()).claim(args.region, args.agent ?? null)),
+    kinux_region_brief: async (args = {}) => teamErr(async () => (await getTeam()).brief(args.region)),
+    kinux_propose_check: async (args = {}) => {
+      const t = await getTeam();
+      const r = await t.propose(args);
+      if (r.status === 'committed' && opts['suite-out']) writeFileSync(opts['suite-out'], `${t.render()}\n`);
+      const { region_after, ...rest } = r;
+      return { ...rest, ...(region_after ? { region_score: region_after.score, region_survivors: region_after.survived } : {}) };
+    },
+    kinux_team_status: async () => (await getTeam()).status(),
+  };
+
   const tools = {
     kinux_doctor: () => new Promise(res => {
       execFile(process.execPath, [DOCTOR], { timeout: 30_000 }, (err, stdout, stderr) => {
@@ -422,8 +474,8 @@ export function createServer(opts, { log = () => {} } = {}) {
   };
 
   const role = opts.role ?? 'builder';
-  const toolset = role === 'reviewer' ? REVIEW_TOOLS : role === 'villain' ? VILLAIN_TOOLS : TOOLS;
-  const impl = role === 'reviewer' ? reviewTools : role === 'villain' ? villainTools : tools;
+  const toolset = role === 'reviewer' ? REVIEW_TOOLS : role === 'villain' ? VILLAIN_TOOLS : role === 'team' ? TEAM_TOOLS : TOOLS;
+  const impl = role === 'reviewer' ? reviewTools : role === 'villain' ? villainTools : role === 'team' ? teamTools : tools;
 
   function validateArgs(tool, args) {
     if (args === undefined || args === null) return {};
@@ -456,7 +508,7 @@ export function createServer(opts, { log = () => {} } = {}) {
     const { id, method, params } = msg;
     if (method === 'initialize') {
       return { protocolVersion: PROTOCOL_VERSION, capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'kinux', version: '0.1.0' }, instructions: role === 'reviewer' ? REVIEW_CONTRACT : role === 'villain' ? VILLAIN_CONTRACT : VERDICT_CONTRACT };
+        serverInfo: { name: 'kinux', version: '0.1.0' }, instructions: role === 'reviewer' ? REVIEW_CONTRACT : role === 'villain' ? VILLAIN_CONTRACT : role === 'team' ? TEAM_CONTRACT : VERDICT_CONTRACT };
     }
     if (method === 'ping') return {};
     if (method === 'tools/list') return { tools: toolset.map(t => ({ ...t, _meta: { schemaVersion: SCHEMA_VERSION, role: opts.role } })) };
