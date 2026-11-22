@@ -116,6 +116,16 @@ test('browser: the studio shows the conversation, the solved field with its call
   assert.equal((await page.textContent('[data-testid=studio-phase]')).trim(), first.status === 'killed' ? 'Fault caught' : first.status === 'survived' ? 'Fault missed' : 'Not checked');
   await page.click('[data-testid=studio-all]');
 
+  // Data view: every check, every fault and every part, as tables.
+  await page.click('[data-testid=studio-tab-data]');
+  const checks = events.filter(e => e.type === 'test.queued').length;
+  assert.equal(await page.locator('[data-testid=data-checks] tbody tr').count(), checks);
+  assert.equal(await page.locator('[data-testid=data-faults] tbody tr').count(), mutants.length);
+  await page.waitForSelector('[data-testid=data-parts]');
+  const model = JSON.parse(readFileSync(join(out, 'design-model.json'), 'utf8'));
+  assert.equal(await page.locator('[data-testid=data-parts] tbody tr').count(), model.parts.length);
+  assert.ok(await page.locator('[data-testid=studio-power]').count() === 1, 'power per part is listed');
+
   // PCB tab: the field lies under KiCad's drawing.
   await page.click('[data-testid=studio-mode-heat]');
   await page.click('[data-testid=studio-tab-pcb]');

@@ -548,3 +548,13 @@ svg.strip, svg.trace, svg.ci { display: block; width: 100%; }
 .kv-left .kv-card-head { flex-wrap: wrap; }
 .kv-left .kv-card-head .kv-h { min-width: 200px; }
 @media (max-width: 1200px) { .kv-head { flex-wrap: wrap; } }
+.kv-stack { display: flex; }
+.kv-stack i { border-radius: 0 !important; }
+.kv-data { position: absolute; inset: 0; overflow: auto; padding: 14px 18px 40px; font-size: 12px; scrollbar-width: thin; scrollbar-color: #273042 transparent; }
+.kv-data h3 { margin: 18px 0 8px; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; color: #7DD3FC; }
+.kv-data h3:first-child { margin-top: 0; }
+.kv-table { border-collapse: collapse; width: 100%; margin-bottom: 8px; }
+.kv-table th { text-align: left; font: 600 11px var(--sans); color: #8B95A7; border-bottom: 1px solid #273042; padding: 5px 8px; position: sticky; top: -14px; background: #0E1219; }
+.kv-table td { border-bottom: 1px solid #1A202B; padding: 5px 8px; color: #D3D9E4; vertical-align: top; font-family: var(--mono); font-size: 11.5px; word-break: break-word; }
+.kv-table tr:hover td { background: #121927; }
+.kv-table td:first-child { white-space: nowrap; color: #A9B3C4; }

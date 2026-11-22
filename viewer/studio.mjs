@@ -206,7 +206,7 @@ function terminal(state, ctx, field, shown) {
 // --- centre: the viewport ----------------------------------------------------------
 
 function viewport(state, ctx, views, parts, field, shown) {
-  const viewsAvail = [views.board3d && ['board3d', '3D'], views.pcb && ['pcb', 'PCB'], views.schematic && ['schematic', 'Schematic']].filter(Boolean);
+  const viewsAvail = [views.board3d && ['board3d', '3D'], views.pcb && ['pcb', 'PCB'], views.schematic && ['schematic', 'Schematic'], ['data', 'Data']].filter(Boolean);
   if (!ui.viewChosen || !viewsAvail.some(([k]) => k === ui.view)) ui.view = viewsAvail[0]?.[0] ?? null;
   const range = field?.drawn ? fieldRange(field) : null;
   if (!ui.modeChosen || !range) ui.mode = range ? 'heat' : 'faults';
@@ -239,7 +239,8 @@ function viewport(state, ctx, views, parts, field, shown) {
   }
 
   let stage;
-  if (!parts) stage = el('p', { class: 'kv-muted kv-pad', text: views.parts ? 'Loading the design views…' : 'This run has no design views: run it on a KiCad design to see the board.' });
+  if (ui.view === 'data') stage = dataView(state, ctx, field, shown);
+  else if (!parts) stage = el('p', { class: 'kv-muted kv-pad', text: views.parts ? 'Loading the design views…' : 'This run has no design views: run it on a KiCad design to see the board.' });
   else if (ui.view === 'board3d') {
     stage = studioStage({ glbUrl: ctx.artifactUrl(views.board3d), parts, field, range, mode: ui.mode, status, callouts, selection: current ? new Set([current.target, ...sel]) : sel, onSelect: ctx.onSelect });
   } else if (ui.view === 'pcb') {
@@ -282,7 +283,7 @@ function viewport(state, ctx, views, parts, field, shown) {
   return el('section', { class: 'kv-card kv-centre', 'aria-label': '3D multi-physics viewport' }, [
     el('div', { class: 'kv-vp-head' }, [toolbar, el('div', { class: 'kv-h', text: '2. 3D multi-physics studio' })]),
     el('div', { class: 'kv-vp-sub' }, [modes, viewSwitch]),
-    el('div', { class: 'kv-stage' }, [stage, el('div', { class: 'kv-stage-legend' }, [legend]),
+    el('div', { class: 'kv-stage' }, ui.view === 'data' ? [stage] : [stage, el('div', { class: 'kv-stage-legend' }, [legend]),
       el('div', { class: 'kv-stage-foot', text: `${solvers} · fault ${shown} / ${(state.mutantOrder ?? []).length}` })]),
     field ? fieldNotes(field) : null,
   ]);
@@ -372,11 +373,10 @@ function instruments(state, ctx, field, shown) {
   const total = (state.mutantOrder ?? []).length;
   const traces = [];
   const waves = state.artifacts.filter(a => a.kind === 'waveform' && a.mime === 'application/json');
-  waves.slice(0, 2).forEach((a, i) => { const p = ctx.artifactUrl ? loaded(ctx.artifactUrl(a), ctx) : undefined; if (p?.series?.length) traces.push(waveCard(p, i * 2)); });
+  waves.forEach((a, i) => { const p = ctx.artifactUrl ? loaded(ctx.artifactUrl(a), ctx) : undefined; if (p?.series?.length) traces.push(waveCard(p, i * 2)); });
   const colours = ['#38BDF8', '#38BDF8', '#FB923C', '#FB923C'];
   for (const tid of state.testOrder.filter(x => x !== 'design')) {
-    if (traces.length >= 4) break;
-    const c = traceCard(state, tid, shown, total, colours[traces.length]);
+    const c = traceCard(state, tid, shown, total, colours[traces.length % 4]);
     if (c) traces.push(c);
   }
   const s = state.score;
@@ -408,9 +408,120 @@ function instruments(state, ctx, field, shown) {
         el('span', { class: 'kv-bar-track' }, [el('i', { style: `width:${(((p.peak_c - amb) / maxRise) * 100).toFixed(1)}%;background:rgb(${thermalRamp(0.4 + 0.6 * (p.peak_c - amb) / maxRise).join(',')})` })]),
         el('span', { class: 'kv-bar-v', text: `${p.peak_c.toFixed(1)}°C` }),
       ]))) : el('p', { class: 'kv-muted', text: 'No temperature field in this run.' }),
+    ]),
+    powerSection(field),
+    faultsSection(state, shown),
+    el('div', { class: 'kv-section' }, [
       el('div', { class: 'kv-rig', title: 'MuJoCo is installed, but this design has no mechanism to simulate' }, ['Kinematic rig: not connected (no mechanism in this design)']),
     ]),
   ]);
+}
+
+function barRows(rows, fmt) {
+  const max = Math.max(...rows.map(r => r.value), 1e-15);
+  return el('div', { class: 'kv-bars' }, rows.map(r => el('div', { class: 'kv-bar' }, [
+    el('span', { class: 'kv-bar-k', text: r.label }),
+    el('span', { class: 'kv-bar-track' }, [el('i', { style: `width:${((r.value / max) * 100).toFixed(1)}%;background:${r.colour}` })]),
+    el('span', { class: 'kv-bar-v', text: fmt(r.value) }),
+  ])));
+}
+
+function powerSection(field) {
+  const rows = Object.entries(field?.power_w ?? {}).filter(([, p]) => p.watts > 0).sort((a, b) => b[1].watts - a[1].watts)
+    .map(([ref, p]) => ({ label: ref, value: p.watts, colour: p.note ? '#64748B' : '#38BDF8' }));
+  if (!rows.length) return null;
+  const bal = field.power_source?.balance;
+  return el('div', { class: 'kv-section', 'data-testid': 'studio-power' }, [
+    el('div', { class: 'kv-section-h', text: 'Power per part (ngspice)' }),
+    barRows(rows, fmtW),
+    el('div', { class: 'kv-trace-note', text: `${field.power_source.analysis}${field.power_source.averaged ? `, averaged ${tickText(field.power_source.averaged.from)}s–${tickText(field.power_source.averaged.to)}s` : ''}${bal ? ` · sources deliver ${fmtW(bal.delivered_w)}, parts absorb ${fmtW(bal.absorbed_w)}` : ''}${rows.some(r => r.colour === '#64748B') ? ' · grey: a stand-in model' : ''}` }),
+  ]);
+}
+
+function faultsSection(state, shown) {
+  const per = new Map();
+  for (const id of (state.mutantOrder ?? []).slice(0, shown)) {
+    const m = state.mutants[id];
+    const r = per.get(m.target) ?? { killed: 0, survived: 0, other: 0 };
+    r[m.status === 'killed' || m.status === 'survived' ? m.status : 'other'] += 1;
+    per.set(m.target, r);
+  }
+  if (!per.size) return null;
+  const rows = [...per].sort((a, b) => b[1].survived - a[1].survived || b[1].killed - a[1].killed);
+  return el('div', { class: 'kv-section', 'data-testid': 'studio-faults-per-part' }, [
+    el('div', { class: 'kv-section-h', text: 'Faults per part' }),
+    el('div', { class: 'kv-bars' }, rows.map(([ref, r]) => {
+      const n = r.killed + r.survived + r.other;
+      return el('div', { class: 'kv-bar' }, [
+        el('span', { class: 'kv-bar-k', text: ref }),
+        el('span', { class: 'kv-bar-track kv-stack' }, [['killed', '#34D399'], ['survived', '#F87171'], ['other', '#64748B']].map(([k, c]) => el('i', { style: `width:${((r[k] / n) * 100).toFixed(1)}%;background:${c}` }))),
+        el('span', { class: 'kv-bar-v', text: `${r.killed}/${r.killed + r.survived}${r.other ? ` +${r.other}` : ''}` }),
+      ]);
+    })),
+    el('div', { class: 'kv-trace-note', text: 'green caught · red missed · grey not checked; caught/checkable (+ not checked)' }),
+  ]);
+}
+
+// --- the Data view: every table the run has ---------------------------------------
+
+const table = (head, rows, attrs = {}) => el('table', { class: 'kv-table', ...attrs }, [
+  el('thead', {}, [el('tr', {}, head.map(h => el('th', { text: h })))]),
+  el('tbody', {}, rows.map(r => el('tr', {}, r.map(c => (c instanceof Node ? el('td', {}, [c]) : el('td', { text: c === null || c === undefined ? '—' : String(c) })))))),
+]);
+const verdictChip = (v, label = v) => el('span', { class: `kv-tag tone-${v === 'PASS' || v === 'killed' ? 'good' : v === 'FAIL' || v === 'survived' ? 'bad' : 'warn'}`, text: label });
+
+function dataView(state, ctx, field, shown) {
+  const design = ctx.artifactUrl ? loaded(ctx.artifactUrl({ uri: 'design-model.json', sha256: '' }), ctx) : undefined;
+  const order = (state.mutantOrder ?? []).slice(0, shown);
+  const caughtBy = new Map();
+  for (const id of order) for (const tid of state.mutants[id].killed_by) caughtBy.set(tid, (caughtBy.get(tid) ?? 0) + 1);
+  const s = state.score;
+  const secs = [];
+  secs.push(el('h3', { text: 'Run' }), table(['', ''], [
+    ['Design', state.run.project], ['Run', state.run.run_id], ['Design hash', state.run.design_hash],
+    ['Tools', Object.entries(state.run.tool_versions ?? {}).map(([k, v]) => `${k} ${v}`).join(', ')],
+    ...(s ? [['Mutants', `${s.total}: ${s.killed} caught, ${s.survived} missed, ${s.not_checked} not checked, ${s.errors} errors, ${s.equivalent} equivalent`],
+      ['Score', `${pct(s.score)} (95% CI ${pct(s.ci_low)}–${pct(s.ci_high)}), checkable ${pct(s.checkable_fraction)}`],
+      ['Cap', s.cap?.bites ? `${(s.cap.applied_at * 100).toFixed(0)}%: ${s.cap.reason}` : 'none']] : []),
+  ], { 'data-testid': 'data-run' }));
+
+  const checks = state.testOrder.filter(t => t !== 'design').map(tid => {
+    const t = state.tests[tid], b = t.results.baseline;
+    return [tid.split(':').slice(1, 3).join(':'), t.title, b?.measured !== null && b?.measured !== undefined ? `${tickText(b.measured, 4)}${b.units ?? ''}` : '—', b?.limit, b ? verdictChip(b.verdict) : '—', caughtBy.get(tid) ?? 0];
+  });
+  secs.push(el('h3', { text: `Checks (${checks.length})` }), table(['Block:line', 'Check', 'Design measured', 'Limit', 'Design verdict', 'Faults caught'], checks, { 'data-testid': 'data-checks' }));
+
+  const per = new Map();
+  for (const id of order) { const m = state.mutants[id]; const r = per.get(m.target) ?? { k: 0, s: 0, o: 0 }; m.status === 'killed' ? r.k++ : m.status === 'survived' ? r.s++ : r.o++; per.set(m.target, r); }
+  const partRows = (design?.parts ?? []).map(p => {
+    const pw = field?.power_w?.[p.ref], pk = field?.parts?.[p.ref], f = per.get(p.ref);
+    return [p.ref, p.value_raw, p.status === 'modelled' ? 'modelled' : `${p.status}${p.reason_code ? ` (${p.reason_code})` : ''}`, p.detail,
+      pw ? fmtW(pw.watts) : '—', pk ? `${pk.peak_c.toFixed(2)}°C` : '—', f ? `${f.k} caught, ${f.s} missed${f.o ? `, ${f.o} n/c` : ''}` : '—'];
+  });
+  secs.push(el('h3', { text: `Parts (${partRows.length || 'loading…'})` }),
+    partRows.length ? table(['Part', 'Value', 'Status', 'How it is simulated', 'Power', 'Peak temp', 'Faults'], partRows, { 'data-testid': 'data-parts' })
+      : el('p', { class: 'kv-muted', text: design === undefined ? 'Loading design-model.json…' : 'No design model in this run.' }));
+
+  const faultRows = order.map((id, i) => {
+    const m = state.mutants[id];
+    return [i + 1, m.target, m.description, verdictChip(m.status, m.status.replace('_', ' ')), m.killed_by.map(t => state.tests[t]?.title ?? t).join('; ')];
+  });
+  secs.push(el('h3', { text: `Faults injected (${faultRows.length})` }), table(['#', 'Part', 'Fault', 'Result', 'Caught by'], faultRows, { 'data-testid': 'data-faults' }));
+
+  if (field) {
+    const st = field.study ?? {};
+    secs.push(el('h3', { text: 'Thermal solve' }), table(['', ''], [
+      ['Result', field.drawn ? `converged, peak ${field.peak_c.toFixed(3)}°C` : `${field.verdict} ${field.reason_code}: ${field.reason}`],
+      ['Model', field.model],
+      ['Board', field.board_mm ? `${field.board_mm.width} × ${field.board_mm.height} × ${field.board_mm.thickness} mm, ${field.board_mm.copper_layers} copper layers` : '—'],
+      ['Conductivity', field.conductivity_w_mk ? `in-plane ${field.conductivity_w_mk.in_plane.toFixed(3)}, through ${field.conductivity_w_mk.through.toFixed(4)} W/(m K)` : '—'],
+      ['Power', field.power_source?.balance ? `${fmtW(field.total_w)} placed; delivered ${fmtW(field.power_source.balance.delivered_w)}, absorbed ${fmtW(field.power_source.balance.absorbed_w)} (${field.power_source.analysis})` : '—'],
+    ]), table(['Grid (mm)', 'Elements', 'Peak (°C)', 'Power applied'], (st.levels ?? []).map(l => [l.size.toFixed(3), l.elements, l.peak_c.toFixed(4), fmtW(l.applied_w)])),
+    table(['Input', 'Value', 'Source'], Object.entries(field.inputs ?? {}).filter(([, v]) => v && typeof v === 'object' && 'value' in v).map(([k, v]) => [k, v.value, v.source])));
+  }
+  const waves = state.artifacts.filter(a => a.kind === 'waveform');
+  if (waves.length) secs.push(el('h3', { text: 'Waveforms' }), table(['Artifact', 'File', 'Bytes', 'sha256'], waves.map(a => [a.artifact_id, a.uri, a.bytes, String(a.sha256).slice(7, 19)])));
+  return el('div', { class: 'kv-data', 'data-testid': 'studio-data' }, secs);
 }
 
 /** The studio for a run. */
