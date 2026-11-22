@@ -1,24 +1,32 @@
-// The studio layout: one screen that reads like a design studio.
+// The studio: the Kinux viewer as one screen, laid out after the "Kinux MCP
+// Viewer" design (header with replay controls, agent terminal, 3D
+// multi-physics viewport, instrumentation panel).
 //
-//   left    the testing terminal: what the agent asked, each fault the Villain
-//           injected, and what the solver said back, as a conversation
-//   centre  the design itself: 2D schematic, PCB, or the 3D board with its
-//           solved temperature field and callouts
-//   right   instruments: telemetry numbers and graphs
+//   header  the run, its phase, and replay: step through the run one injected
+//           fault at a time, or auto-run it
+//   left    the terminal: what the attached agent asked (Kinux Builder), each
+//           fault the Fault Inspector injected, and what the Solver measured
+//   centre  the board: 3D (with the CalculiX temperature field), PCB or
+//           schematic; colour by temperature or by faults caught and missed
+//   right   instruments: one trace per check (its value under every fault,
+//           with its limits), telemetry numbers, the temperature per part
 //
-// Same rule as the rest of the viewer: every sentence and every number is
-// derived from a run event or a run file (events.jsonl, heat-field.json,
-// waves/*.json, activity.json). Where a run lacks something, the studio says
-// so instead of drawing it.
+// Rule kept from the rest of the viewer: every word and number comes from a
+// run event or a run file (events.jsonl, heat-field.json, waves/*.json,
+// activity.json). Modes with no solver behind them (stress, current density,
+// the kinematic rig) are shown as not connected, never drawn.
 
 import { el, svgEl } from './dom.mjs';
 import { partStatus, view2d } from './panels/board.mjs';
 import { describeActivity } from './panels/log.mjs';
-import { heatArtifact, fieldRange, fieldCanvas, colourBar, hottestParts, fieldNotes } from './heatfield.mjs';
-import { studioStage } from './studio3d.mjs';
+import { heatArtifact, fieldRange, fieldCanvas, hottestParts, fieldNotes, thermalRamp } from './heatfield.mjs';
+import { studioStage, stageActions } from './studio3d.mjs';
 
 const files = new Map();
-const ui = { tab: null, tabChosen: false, mode: null, modeChosen: false, filter: 'all', feedScroll: null, activity: [], activityPolling: false };
+const ui = {
+  view: null, viewChosen: false, mode: null, modeChosen: false, step: null, playing: false, timer: null,
+  feedScroll: null, activity: [], activityPolling: false, copied: false,
+};
 
 function fetchFile(url, as = 'json') {
   if (!files.has(url)) {
@@ -37,251 +45,375 @@ function loaded(url, ctx, as) {
 }
 
 const fmtW = w => (Math.abs(w) >= 1 ? `${w.toFixed(2)} W` : `${(w * 1000).toFixed(1)} mW`);
-const boardName = p => String(p ?? '').split('/').pop().replace(/\.kicad_sch$|\.cir$/i, '') || 'design';
+const pct = x => `${(x * 100).toFixed(1)}%`;
+const fileName = p => String(p ?? '').split('/').pop() || 'design';
+const ico = (d, size = 18) => svgEl('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.7, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' },
+  [].concat(d).map(x => svgEl('path', { d: x })));
+const LOGO = () => svgEl('svg', { width: 28, height: 28, viewBox: '0 0 24 24', fill: 'none', stroke: '#38BDF8', 'stroke-width': 1.8, 'stroke-linejoin': 'round', 'aria-hidden': 'true' },
+  [svgEl('path', { d: 'M12 2 21 7v10l-9 5-9-5V7z' }), svgEl('path', { d: 'M12 22V12M21 7l-9 5-9-5' })]);
 
-// --- left: the terminal ------------------------------------------------------
+// --- replay ------------------------------------------------------------------
 
-/** What the solver said about one injected fault, from that mutant's own results. */
+/** How many faults are shown: all of them unless the person is stepping. */
+const shownCount = state => {
+  const n = (state.mutantOrder ?? []).length;
+  return ui.step === null ? n : Math.min(ui.step, n);
+};
+
+function stopPlay() { if (ui.timer) clearInterval(ui.timer); ui.timer = null; ui.playing = false; }
+
+function play(state, ctx) {
+  const n = (state.mutantOrder ?? []).length;
+  if (ui.step === null || ui.step >= n) ui.step = 0;
+  ui.playing = true;
+  ui.timer = setInterval(() => {
+    if (ui.step >= n) { stopPlay(); ctx.rerender?.(); return; }
+    ui.step += 1;
+    ui.feedScroll = Infinity;
+    ctx.rerender?.();
+  }, 900);
+}
+
+/** The run's phase, as the header chip says it. */
+export function phaseOf(state, shown) {
+  const n = (state.mutantOrder ?? []).length;
+  if (!state.run.run_id) return ['Awaiting run', 'idle'];
+  if (shown > 0 && (ui.step !== null)) {
+    const m = state.mutants[state.mutantOrder[shown - 1]];
+    if (m.status === 'survived') return ['Fault missed', 'bad'];
+    if (m.status === 'killed') return ['Fault caught', 'good'];
+    return ['Not checked', 'warn'];
+  }
+  if (ui.step === 0) return ['Baseline', 'run'];
+  if (!state.run.finished) return [n ? 'Injecting faults' : 'Simulating', 'run'];
+  const s = state.score;
+  if (s?.cap?.bites) return [`Score ${pct(s.score)} · capped ${(s.cap.applied_at * 100).toFixed(0)}%`, 'warn'];
+  return [s ? `Score ${pct(s.score)}` : 'Finished', 'good'];
+}
+
+function header(state, ctx, shown) {
+  const n = (state.mutantOrder ?? []).length;
+  const [phase, tone] = phaseOf(state, shown);
+  const btn = (label, attrs, kids) => el('button', { type: 'button', class: 'kv-btn', 'aria-label': label, ...attrs }, kids);
+  return el('header', { class: 'kv-head' }, [
+    el('div', { class: 'kv-head-l' }, [
+      LOGO(),
+      el('div', { class: 'kv-title' }, [
+        el('div', { class: 'kv-title-main', text: 'Kinux Multi-Physics Viewer' }),
+        el('div', { class: 'kv-title-sub', text: `MCP app · ${fileName(state.run.project).replace(/\.kicad_sch$/, '')} · ${state.run.run_id ?? ''}`, title: state.run.project ?? '' }),
+      ]),
+      el('span', { class: `kv-phase tone-${tone}`, 'data-testid': 'studio-phase', text: phase }),
+    ]),
+    el('div', { class: 'kv-head-r' }, [
+      el('span', { class: 'kv-steplabel', 'data-testid': 'studio-step', text: n ? `Fault ${shown} / ${n}` : 'No faults' }),
+      btn('Previous fault', { disabled: shown <= 0 || !n, 'data-testid': 'studio-prev', onclick: () => { stopPlay(); ui.step = Math.max(0, shown - 1); ctx.rerender?.(); } },
+        [ico('M15 6l-6 6 6 6', 16)]),
+      btn('Next fault', { disabled: shown >= n, 'data-testid': 'studio-next', onclick: () => { stopPlay(); ui.step = Math.min(n, shown + 1); ui.feedScroll = Infinity; ctx.rerender?.(); } },
+        ['Step', ico('M9 6l6 6-6 6', 16)]),
+      el('button', { type: 'button', class: 'kv-btn kv-btn-primary', disabled: !n, 'data-testid': 'studio-play',
+        onclick: () => { if (ui.playing) stopPlay(); else play(state, ctx); ctx.rerender?.(); } }, [ui.playing ? 'Pause' : ui.step !== null && ui.step >= n ? 'Replay' : 'Auto-run']),
+      btn('Reset', { 'data-testid': 'studio-reset', onclick: () => { stopPlay(); ui.step = 0; ui.feedScroll = 0; ctx.rerender?.(); } }, ['Reset']),
+      btn('Show the whole run', { 'data-testid': 'studio-all', disabled: ui.step === null, onclick: () => { stopPlay(); ui.step = null; ctx.rerender?.(); } }, ['Whole run']),
+      btn('All events', { 'data-testid': 'layout-classic', onclick: () => { stopPlay(); ctx.setLayout?.('classic'); } }, ['All events']),
+    ]),
+  ]);
+}
+
+// --- left: the terminal --------------------------------------------------------
+
+/** What the Solver said about one injected fault, from that mutant's own results. */
 export function solverReply(state, m) {
   const results = state.testOrder.map(tid => state.tests[tid]).filter(t => t.test_id !== 'design' && t.results[m.mutant_id]);
   if (m.status === 'killed') {
     const t = state.tests[m.killed_by[0]];
     const r = t?.results[m.mutant_id];
     const meas = r && r.measured !== null ? ` measured ${r.measured}${r.units ? ` ${r.units}` : ''}${r.limit ? `, limit ${r.limit}` : ''}` : '';
-    return { tone: 'ok', head: 'CAUGHT', text: `${t?.title ?? m.killed_by[0]} failed:${meas}${m.killed_by.length > 1 ? ` (+${m.killed_by.length - 1} more check${m.killed_by.length > 2 ? 's' : ''})` : ''}` };
+    return { tag: 'CAUGHT', tone: 'good', text: `${t?.title ?? m.killed_by[0]} failed:${meas}${m.killed_by.length > 1 ? ` (+${m.killed_by.length - 1} more)` : ''}` };
   }
-  if (m.status === 'survived') {
-    return { tone: 'bad', head: 'NOT CAUGHT', text: `all ${results.length} checks still pass with this fault in the circuit` };
-  }
-  if (m.status === 'equivalent') return { tone: 'dim', head: 'EQUIVALENT', text: 'the solver cannot tell this fault from the original design' };
+  if (m.status === 'survived') return { tag: 'MISSED', tone: 'bad', text: `all ${results.length} checks still pass with this fault in the circuit` };
+  if (m.status === 'equivalent') return { tag: 'EQUIVALENT', tone: 'idle', text: 'the solver cannot tell this fault from the original design' };
   const why = results.map(t => t.results[m.mutant_id]).find(r => r.reason_code);
-  return { tone: 'warn', head: m.status === 'error' ? 'ERROR' : 'NOT CHECKED', text: why ? `${why.reason_code}: ${String(why.reason ?? '').split('\n')[0].slice(0, 140)}` : 'no usable result' };
+  return { tag: m.status === 'error' ? 'ERROR' : 'NOT CHECKED', tone: 'warn', text: why ? `${why.reason_code}: ${String(why.reason ?? '').split('\n')[0].slice(0, 140)}` : 'no usable result' };
 }
 
-// Who speaks in the terminal. The Fault Inspector is Kinux's mutation engine
-// (it injects each fault); the Kinux Builder Bot runs the solvers and reports
-// what they computed; the Builder and Reviewer agents are whatever coding agent
-// is attached over MCP.
-const AVATAR = {
-  builder: ['builder', 'Builder agent'], villain: ['inspector', 'Fault Inspector'], solver: ['bot', 'Kinux Builder Bot'],
-  kinux: ['kinux', 'Kinux'], reviewer: ['reviewer', 'Reviewer agent'],
+const WHO = {
+  kinux: ['K', 'Kinux'], builder: ['KB', 'Kinux Builder'], reviewer: ['RV', 'Reviewer'],
+  inspector: ['FI', 'Fault Inspector'], solver: ['S', 'Solver'],
 };
-const ICONS = {
-  builder: 'M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8V21h3.2l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.4-.6-.6-2.4z',
-  inspector: 'M10.5 3a7.5 7.5 0 0 1 5.9 12.1l4.7 4.8-1.4 1.4-4.8-4.7A7.5 7.5 0 1 1 10.5 3zm0 2a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11zM9.5 7h2v4h-2zm0 5h2v2h-2z',
-  bot: 'M11 2h2v3h4a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3h4zM8.5 10a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm7 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM8 15h8v1.5H8zM1 10h2v5H1zm20 0h2v5h-2z',
-  kinux: 'M12 2l9 5v10l-9 5-9-5V7zm0 2.3L5 8.2v7.6l7 3.9 7-3.9V8.2zM9 8h2v3.2L14 8h2.6l-3.4 3.6L17 16h-2.6l-2.7-3.1-.7.7V16H9z',
-  reviewer: 'M4 4h16v12H8l-4 4zm4 4v2h8V8zm0 4v2h5v-2z',
-};
-const icon = (kind, cls = 'tm-icon') => svgEl('svg', { viewBox: '0 0 24 24', class: cls, 'aria-hidden': 'true' }, [svgEl('path', { d: ICONS[kind], fill: 'currentColor' })]);
 
-function bubble(who, title, body, extra = {}) {
-  const [glyph, name] = AVATAR[who];
-  return el('li', { class: `tm-msg tm-${who}${extra.tone ? ` tone-${extra.tone}` : ''}${extra.selected ? ' selected' : ''}`, 'data-testid': 'terminal-msg', 'data-who': who,
-    'data-ref': extra.ref ?? '', onclick: extra.ref ? () => extra.onSelect?.(extra.ref) : null }, [
-    el('span', { class: 'tm-avatar' }, [icon(glyph)]),
-    el('div', { class: 'tm-body' }, [
-      el('div', { class: 'tm-who' }, [el('strong', { text: title ?? name }), extra.sub ? el('span', { class: 'tm-sub', text: extra.sub }) : null]),
-      ...[].concat(body),
+function line(who, text, { tag = null, tone = null, ref = null, sub = null, ctx = null, selected = false } = {}) {
+  const [ini, name] = WHO[who];
+  return el('div', { class: `kv-line kv-${who}${selected ? ' selected' : ''}`, 'data-testid': 'terminal-msg', 'data-who': who, 'data-ref': ref ?? '',
+    onclick: ref && ctx ? () => ctx.onSelect?.(ref) : null }, [
+    el('div', { class: 'kv-badge', text: ini }),
+    el('div', { class: 'kv-line-body' }, [
+      el('div', { class: 'kv-name' }, [name, sub ? el('span', { class: 'kv-sub', text: ` ${sub}` }) : null]),
+      el('div', { class: 'kv-text' }, [tag ? el('span', { class: `kv-tag tone-${tone}`, text: tag }) : null, tag ? ' ' : null, text]),
     ]),
   ]);
 }
 
-function terminal(state, ctx, field) {
-  const msgs = [];
+function terminal(state, ctx, field, shown) {
   const sel = ctx.selection ?? new Set();
-  const tests = state.testOrder.filter(t => t !== 'design').length;
-  msgs.push(bubble('kinux', null, el('div', { text: `Run started on ${boardName(state.run.project)}. ${tests} checks from the suite; ${Object.keys(state.mutants).length || 'no'} faults to inject.` }), { sub: state.run.run_id }));
+  const items = [];
+  const checks = state.testOrder.filter(t => t !== 'design').length;
+  items.push(line('kinux', `Run started on ${fileName(state.run.project)}: ${checks} checks, ${(state.mutantOrder ?? []).length} faults to inject.`, { sub: state.run.run_id }));
   for (const a of ui.activity) {
     const d = describeActivity(a);
-    msgs.push(bubble(a.role === 'reviewer' ? 'reviewer' : 'builder', d.agent, [el('div', { text: d.action }), d.decision ? el('div', { class: 'tm-reply', text: `Kinux: ${d.decision}` }) : null], { tone: d.ok ? null : 'bad', sub: 'via MCP' }));
+    items.push(line(a.role === 'reviewer' ? 'reviewer' : 'builder', `${d.action}${d.decision ? ` → ${d.decision}` : ''}`, { tag: d.ok ? null : 'REFUSED', tone: 'bad', sub: 'via MCP' }));
   }
   if (field) {
-    msgs.push(bubble('solver', null, field.drawn
-      ? el('div', { text: `Board heat solved: hottest point ${field.peak_c.toFixed(1)} °C at ${field.inputs.ambient_c.value} °C ambient, ${fmtW(field.total_w)} dissipated. Converged over ${field.study.levels.length} grids.` })
-      : el('div', { text: `Board heat not drawn: ${field.reason}` }), { tone: field.drawn ? 'ok' : 'warn', sub: 'ngspice + CalculiX' }));
+    items.push(line('solver', field.drawn
+      ? `ngspice + CalculiX: board heat solved, hottest ${field.peak_c.toFixed(1)} °C at ${field.inputs.ambient_c.value} °C ambient, ${fmtW(field.total_w)} dissipated (converged over ${field.study.levels.length} grids).`
+      : `Board heat not drawn: ${field.reason}`, { tag: field.drawn ? 'THERMAL' : 'NOT CHECKED', tone: field.drawn ? 'run' : 'warn' }));
   }
-  const order = state.mutantOrder ?? [];
-  const counts = { all: order.length, survived: 0, killed: 0, other: 0 };
-  for (const id of order) { const s = state.mutants[id].status; counts[s === 'survived' || s === 'killed' ? s : 'other'] += 1; }
+  const order = (state.mutantOrder ?? []).slice(0, shown);
   for (const id of order) {
     const m = state.mutants[id];
-    const cls = m.status === 'survived' || m.status === 'killed' ? m.status : 'other';
-    if (ui.filter !== 'all' && ui.filter !== cls) continue;
-    const reply = solverReply(state, m);
     const on = sel.has(m.target) || sel.has(m.mutant_id);
-    msgs.push(bubble('villain', null, el('div', { text: `Injecting fault: ${m.description}` }), { ref: m.target, onSelect: ctx.onSelect, selected: on, sub: m.target }));
-    msgs.push(bubble('solver', null, [el('span', { class: `tm-verdict tone-${reply.tone}`, text: reply.head }), el('span', { text: ` ${reply.text}` })],
-      { tone: reply.tone, ref: m.target, onSelect: ctx.onSelect, selected: on, sub: state.run.tool_versions?.ngspice ?? 'ngspice' }));
+    const reply = solverReply(state, m);
+    items.push(line('inspector', m.description, { tag: 'INJECT', tone: 'inject', ref: m.target, ctx, selected: on }));
+    items.push(line('solver', reply.text, { tag: reply.tag, tone: reply.tone, ref: m.target, ctx, selected: on, sub: state.run.tool_versions?.ngspice }));
   }
-  const score = state.score;
-  if (score) {
-    msgs.push(bubble('kinux', null, [
-      el('div', { class: 'tm-score', text: `Score ${score.score === null ? '—' : `${(score.score * 100).toFixed(1)}%`}: ${score.killed} of ${score.killed + score.survived} checkable faults caught; ${score.survived} not caught, ${score.not_checked + score.errors} could not be checked.` }),
-      score.cap?.bites ? el('div', { class: 'tm-reply', text: `Capped at ${(score.cap.applied_at * 100).toFixed(0)}%: ${score.cap.reason.split(': ').slice(1).join(': ') || score.cap.reason}` }) : null,
-    ], { sub: 'result' }));
+  const s = state.score;
+  if (s && shown >= (state.mutantOrder ?? []).length) {
+    items.push(line('kinux', `${s.killed} of ${s.killed + s.survived} checkable faults caught (${pct(s.score)}); ${s.survived} missed, ${s.not_checked + s.errors} not checked.${s.cap?.bites ? ` Capped at ${(s.cap.applied_at * 100).toFixed(0)}%: ${s.cap.reason.split(': ').slice(1).join(': ') || s.cap.reason}` : ''}`,
+      { tag: 'SCORE', tone: s.cap?.bites ? 'warn' : 'good' }));
   }
-  const list = el('ol', { class: 'tm-list', 'data-testid': 'terminal-list' }, msgs);
-  const filters = el('div', { class: 'tm-filters' }, [['all', 'All'], ['survived', 'Not caught'], ['killed', 'Caught'], ['other', 'Not checked']].map(([k, label]) =>
-    el('button', { type: 'button', class: `st-chip${ui.filter === k ? ' active' : ''}`, 'data-testid': `terminal-filter-${k}`, onclick: () => { ui.filter = k; ctx.rerender?.(); } }, [`${label} ${counts[k]}`])));
-  if (ui.feedScroll !== null) requestAnimationFrame(() => { list.scrollTop = ui.feedScroll; });
-  list.addEventListener('scroll', () => { ui.feedScroll = list.scrollTop; });
-  const lastAsk = [...ui.activity].reverse().find(a => a.tool);
-  const agentOn = ui.activity.length > 0;
-  const roster = el('div', { class: 'st-roster', 'data-testid': 'studio-roster' }, [
-    ['builder', 'Builder agent', agentOn ? 'attached over MCP' : 'not attached in this run', agentOn],
-    ['inspector', 'Fault Inspector', `${counts.all} faults injected`, counts.all > 0],
-    ['bot', 'Kinux Builder Bot', [state.run.tool_versions?.ngspice, field?.solver?.calculix].filter(Boolean).join(' · ') || 'solvers', true],
-  ].map(([k, name, note, on]) => el('div', { class: `st-agent st-agent-${k}` }, [icon(k, 'st-agent-icon'),
-    el('div', {}, [el('strong', { text: name }), el('span', { text: note })]), el('i', { class: `st-led${on ? ' on' : ''}` })])));
-  return el('section', { class: 'st-col st-left' }, [
-    el('header', { class: 'st-col-head' }, [el('h2', { text: '1. Multi-agent chat & testing terminal' })]),
-    el('div', { class: 'st-prompt' }, [el('span', { class: 'st-prompt-at', text: '@kinux' }), el('span', { text: lastAsk ? ` → ${lastAsk.tool.replace(/^kinux_/, '').replace(/_/g, ' ')}` : ' → ask from Claude Code: "verify this board"' })]),
-    roster,
-    filters,
-    list,
+  if (ui.playing && shown < (state.mutantOrder ?? []).length) items.push(el('div', { class: 'kv-typing', text: 'Fault Inspector is injecting the next fault…' }));
+  const log = el('div', { class: 'kv-log', 'data-testid': 'terminal-list' }, items);
+  requestAnimationFrame(() => { log.scrollTop = ui.feedScroll === Infinity ? log.scrollHeight : ui.feedScroll ?? 0; });
+  log.addEventListener('scroll', () => { ui.feedScroll = log.scrollTop; });
+  const cmd = `@kinux verify ${fileName(state.run.project)} and show me what the faults missed`;
+  return el('section', { class: 'kv-card kv-left', 'aria-label': 'Agent terminal' }, [
+    el('div', { class: 'kv-card-head' }, [
+      el('div', { class: 'kv-h', text: '1. Multi-agent chat & testing terminal' }),
+      el('div', { class: 'kv-pills' }, [el('span', { class: 'kv-pill kv-pill-kb', text: 'Kinux Builder' }), el('span', { class: 'kv-pill kv-pill-fi', text: 'Fault Inspector' })]),
+    ]),
+    log,
+    el('div', { class: 'kv-cmd' }, [
+      el('label', { for: 'kv-cmd', text: 'COMMAND · paste into Claude Code with Kinux attached' }),
+      el('div', { class: 'kv-cmd-row' }, [
+        el('input', { id: 'kv-cmd', type: 'text', value: cmd, readonly: true, 'data-testid': 'studio-command' }),
+        el('button', { type: 'button', class: 'kv-btn kv-btn-primary', 'aria-label': 'Copy command', title: 'Copy to the clipboard',
+          onclick: ev => { navigator.clipboard?.writeText(ev.currentTarget.parentNode.querySelector('input').value).then(() => { ui.copied = true; ctx.rerender?.(); setTimeout(() => { ui.copied = false; ctx.rerender?.(); }, 1500); }, () => {}); } },
+        [ui.copied ? 'Copied' : ico('M5 12h14M13 6l6 6-6 6', 16)]),
+      ]),
+    ]),
   ]);
 }
 
-// --- centre: the design --------------------------------------------------------
+// --- centre: the viewport ----------------------------------------------------------
 
-function centre(state, ctx, views, parts, field) {
-  const tabs = [
-    views.schematic && ['schematic', '2D Schematics'],
-    views.pcb && ['pcb', 'PCB Layout'],
-    views.board3d && ['board3d', 'Multi-Physics Studio'],
-  ].filter(Boolean);
-  // Until the person picks, show the richest view the run has: 3D, with the heat field if one was solved.
-  if (!ui.tabChosen || !tabs.some(([k]) => k === ui.tab)) ui.tab = tabs.at(-1)?.[0] ?? null;
+function viewport(state, ctx, views, parts, field, shown) {
+  const viewsAvail = [views.board3d && ['board3d', '3D'], views.pcb && ['pcb', 'PCB'], views.schematic && ['schematic', 'Schematic']].filter(Boolean);
+  if (!ui.viewChosen || !viewsAvail.some(([k]) => k === ui.view)) ui.view = viewsAvail[0]?.[0] ?? null;
   const range = field?.drawn ? fieldRange(field) : null;
   if (!ui.modeChosen || !range) ui.mode = range ? 'heat' : 'faults';
-  const status = partStatus(state);
   const sel = ctx.selection ?? new Set();
 
-  // Callouts: the hottest parts (from the field) or the parts with faults nobody caught.
+  // Fault colours from the faults shown so far: a replay colours parts as it goes.
+  const status = new Map();
+  const RANK = { survived: 0, error: 1, not_checked: 2, killed: 3, equivalent: 4 };
+  for (const id of (state.mutantOrder ?? []).slice(0, shown)) {
+    const m = state.mutants[id];
+    const cur = status.get(m.target);
+    if (!cur || RANK[m.status] < RANK[cur]) status.set(m.target, m.status);
+  }
+  const current = ui.step !== null && shown > 0 ? state.mutants[state.mutantOrder[shown - 1]] : null;
+
   let callouts = [];
+  if (current) {
+    const r = solverReply(state, current);
+    callouts.push({ ref: current.target, tone: r.tone === 'good' ? 'good' : r.tone === 'bad' ? 'bad' : 'warm', text: `${current.target}: ${r.tag.toLowerCase()} · ${current.description.split(' (')[0].replace(/^\S+\s/, '')}` });
+  }
   if (ui.mode === 'heat' && range) {
-    callouts = hottestParts(field, 4).map(p => ({ ref: p.ref, tone: p.peak_c >= range.max - 0.25 * (range.max - range.min) ? 'hot' : 'warm', text: `${p.ref} ${p.peak_c.toFixed(1)} °C · ${fmtW(p.watts)}` }));
-  } else {
+    for (const p of hottestParts(field, current ? 3 : 4)) {
+      if (callouts.some(c => c.ref === p.ref)) continue;
+      callouts.push({ ref: p.ref, tone: p.peak_c >= range.max - 0.25 * (range.max - range.min) ? 'hot' : 'warm', text: `${p.ref} ${p.peak_c.toFixed(1)} °C · ${fmtW(p.watts)}` });
+    }
+  } else if (!current) {
     const missed = new Map();
-    for (const id of state.mutantOrder ?? []) { const m = state.mutants[id]; if (m.status === 'survived') missed.set(m.target, (missed.get(m.target) ?? 0) + 1); }
-    callouts = [...missed].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([ref, n]) => ({ ref, tone: 'bad', text: `${ref}: ${n} fault${n > 1 ? 's' : ''} not caught` }));
+    for (const id of (state.mutantOrder ?? []).slice(0, shown)) { const m = state.mutants[id]; if (m.status === 'survived') missed.set(m.target, (missed.get(m.target) ?? 0) + 1); }
+    callouts = [...missed].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([ref, n]) => ({ ref, tone: 'bad', text: `${ref}: ${n} fault${n > 1 ? 's' : ''} missed` }));
   }
 
   let stage;
-  if (!parts) stage = el('p', { class: 'st-loading', text: 'Loading the design views…' });
-  else if (ui.tab === 'board3d') {
-    stage = studioStage({ glbUrl: ctx.artifactUrl(views.board3d), parts, field, range, mode: ui.mode, status, callouts, selection: sel, onSelect: ctx.onSelect });
-  } else if (ui.tab === 'pcb') {
+  if (!parts) stage = el('p', { class: 'kv-muted kv-pad', text: views.parts ? 'Loading the design views…' : 'This run has no design views: run it on a KiCad design to see the board.' });
+  else if (ui.view === 'board3d') {
+    stage = studioStage({ glbUrl: ctx.artifactUrl(views.board3d), parts, field, range, mode: ui.mode, status, callouts, selection: current ? new Set([current.target, ...sel]) : sel, onSelect: ctx.onSelect });
+  } else if (ui.view === 'pcb') {
     let underlay = null;
     if (ui.mode === 'heat' && range && parts.pcb_outline) {
       if (!ui.pcbHeat) ui.pcbHeat = fieldCanvas(field, 'top', range).toDataURL();
       const { width: w, height: h } = field.board_mm;
       underlay = { href: ui.pcbHeat, x: field.board_mm.origin[0] - parts.pcb_outline.minX, y: field.board_mm.origin[1] - parts.pcb_outline.minY, w, h };
     }
-    stage = el('div', { class: 'st2d' }, [view2d('pcb', ctx.artifactUrl(views.pcb), parts.pcb, status, sel, ctx, 'PCB', null, underlay)]);
-  } else if (ui.tab === 'schematic') {
-    stage = el('div', { class: 'st2d' }, [view2d('schematic', ctx.artifactUrl(views.schematic), parts.schematic, status, sel, ctx, 'Schematic')]);
-  } else stage = el('p', { class: 'st-loading', text: 'This run has no design views (run it on a KiCad design to see the board).' });
+    stage = el('div', { class: 'st2d' }, [view2d('pcb', ctx.artifactUrl(views.pcb), parts.pcb, partStatus(state), sel, ctx, 'PCB', null, underlay)]);
+  } else stage = el('div', { class: 'st2d' }, [view2d('schematic', ctx.artifactUrl(views.schematic), parts.schematic, partStatus(state), sel, ctx, 'Schematic')]);
 
-  const modeBar = el('div', { class: 'st-modes' }, [
-    range ? el('button', { type: 'button', class: `st-chip${ui.mode === 'heat' ? ' active' : ''}`, 'data-testid': 'studio-mode-heat', onclick: () => { ui.mode = 'heat'; ui.modeChosen = true; ctx.rerender?.(); } }, ['Heat field']) : null,
-    el('button', { type: 'button', class: `st-chip${ui.mode === 'faults' ? ' active' : ''}`, 'data-testid': 'studio-mode-faults', onclick: () => { ui.mode = 'faults'; ui.modeChosen = true; ctx.rerender?.(); } }, ['Faults caught / missed']),
+  const tool = (label, d, fn, attrs = {}) => el('button', { type: 'button', class: 'kv-btn kv-icon', 'aria-label': label, title: label, disabled: ui.view !== 'board3d', onclick: () => { stageActions()?.[fn.name]?.(...(fn.args ?? [])); ctx.rerender?.(); }, ...attrs }, [ico(d)]);
+  const toolbar = el('div', { class: 'kv-tools' }, [
+    tool('Orbit', ['M3 12a9 4 0 0 0 18 0a9 4 0 0 0-18 0', 'M12 3a4 9 0 0 1 0 18'], { name: 'orbit' }, { 'data-testid': 'tool-orbit' }),
+    tool('Pan', 'M12 2v20M2 12h20M9 5l3-3 3 3M9 19l3 3 3-3M5 9l-3 3 3 3M19 9l3 3-3 3', { name: 'pan' }, { 'data-testid': 'tool-pan' }),
+    tool('Zoom in', ['M21 21l-5-5M11 8v6M8 11h6', 'M4 11a7 7 0 1 0 14 0a7 7 0 1 0-14 0'], { name: 'zoom', args: [0.8] }, { 'data-testid': 'tool-zoom-in' }),
+    tool('Zoom out', ['M21 21l-5-5M8 11h6', 'M4 11a7 7 0 1 0 14 0a7 7 0 1 0-14 0'], { name: 'zoom', args: [1.25] }, { 'data-testid': 'tool-zoom-out' }),
+    tool('Wireframe', ['M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z', 'M3 9h18M3 15h18M9 3v18M15 3v18'], { name: 'wireframe' }, { 'data-testid': 'tool-wireframe' }),
+    tool('Reset view', ['M3 12a9 9 0 1 0 3-6.7', 'M3 4v5h5'], { name: 'reset' }, { 'data-testid': 'studio-reset-view' }),
   ]);
-  const legend = ui.mode === 'heat' && range ? colourBar(range)
-    : el('div', { class: 'st-fault-legend' }, [['#f43f5e', 'fault not caught'], ['#2fd27a', 'all faults caught'], ['#8a8f98', 'not checked']]
-      .map(([c, t]) => el('span', {}, [el('i', { style: `background:${c}` }), t])));
-  return el('section', { class: 'st-col st-centre' }, [
-    el('div', { class: 'st-tabs', role: 'tablist' }, [...tabs.map(([k, label]) => el('button', { type: 'button', role: 'tab', class: `st-tab${k === ui.tab ? ' active' : ''}`, 'data-testid': `studio-tab-${k}`,
-      onclick: () => { ui.tab = k; ui.tabChosen = true; ctx.rerender?.(); } }, [label])),
-      el('button', { type: 'button', role: 'tab', class: 'st-tab', disabled: true, title: 'Mechanics and motion (MuJoCo) are not connected to the studio yet' }, ['Robotics Sandbox'])]),
-    el('header', { class: 'st-col-head st-col-head-centre' }, [el('h2', { text: ui.tab === 'board3d' ? '2. The 3D multi-physics studio' : ui.tab === 'pcb' ? '2. PCB' : '2. Schematic' })]),
-    el('div', { class: 'st-stage-wrap' }, [stage, el('div', { class: 'st-stage-tools' }, [modeBar]), el('div', { class: 'st-stage-legend' }, [legend])]),
-    field ? fieldNotes(field) : el('p', { class: 'st-foot', text: 'No temperature field in this run (run with --heat to solve one).' }),
+  const modeTab = (k, label, enabled, why) => el('button', { type: 'button', class: `kv-mode${ui.mode === k ? ' active' : ''}`, disabled: !enabled, title: enabled ? label : why,
+    'data-testid': `studio-mode-${k}`, onclick: () => { ui.mode = k; ui.modeChosen = true; ctx.rerender?.(); } }, [label]);
+  const modes = el('div', { class: 'kv-modes' }, [
+    modeTab('heat', 'Thermal', Boolean(range), field ? `No field: ${field.reason}` : 'Run with --heat to solve the board temperature'),
+    modeTab('faults', 'Faults', true),
+    modeTab('stress', 'Stress', false, 'No structural solve is connected to this run'),
+    modeTab('current', 'Current density', false, 'No current-density solve is connected to this run'),
+  ]);
+  const viewSwitch = el('div', { class: 'kv-views' }, viewsAvail.map(([k, label]) => el('button', { type: 'button', class: `kv-mode${ui.view === k ? ' active' : ''}`, 'data-testid': `studio-tab-${k}`,
+    onclick: () => { ui.view = k; ui.viewChosen = true; ctx.rerender?.(); } }, [label])));
+
+  const legend = ui.mode === 'heat' && range
+    ? el('div', { class: 'kv-scale', 'data-testid': 'hf-colour-bar' }, [
+      el('div', { class: 'kv-scale-ticks' }, [range.max, (range.max + range.min) / 2, range.min].map(v => el('span', { text: `${v.toFixed(1)}°C` }))),
+      el('div', { class: 'kv-scale-ramp', style: `background:linear-gradient(${[1, 0.75, 0.5, 0.25, 0].map(f => `rgb(${thermalRamp(f).join(',')})`).join(',')})` }),
+    ])
+    : el('div', { class: 'kv-fault-legend' }, [['#F87171', 'fault missed'], ['#34D399', 'all faults caught'], ['#94A3B8', 'not checked']].map(([c, t]) => el('span', {}, [el('i', { style: `background:${c}` }), t])));
+  const solvers = [state.run.tool_versions?.ngspice, field?.solver?.calculix].filter(Boolean).join(' + ') || 'solvers';
+  return el('section', { class: 'kv-card kv-centre', 'aria-label': '3D multi-physics viewport' }, [
+    el('div', { class: 'kv-vp-head' }, [toolbar, el('div', { class: 'kv-h', text: '2. 3D multi-physics studio' })]),
+    el('div', { class: 'kv-vp-sub' }, [modes, viewSwitch]),
+    el('div', { class: 'kv-stage' }, [stage, el('div', { class: 'kv-stage-legend' }, [legend]),
+      el('div', { class: 'kv-stage-foot', text: `${solvers} · fault ${shown} / ${(state.mutantOrder ?? []).length}` })]),
+    field ? fieldNotes(field) : null,
   ]);
 }
 
-// --- right: instruments --------------------------------------------------------
+// --- right: instruments ------------------------------------------------------------
 
-function barChart(title, rows, { unit, colour, fmt }) {
-  const W = 300, rowH = 16, H = rows.length * rowH + 6;
-  const max = Math.max(...rows.map(r => r.value), 1e-12);
-  const svg = svgEl('svg', { class: 'st-bars', viewBox: `0 0 ${W} ${H}`, width: '100%', preserveAspectRatio: 'xMinYMin meet' });
-  rows.forEach((r, i) => {
-    const y = 3 + i * rowH, w = Math.max(1, (r.value / max) * (W - 120));
-    svg.append(svgEl('text', { x: 0, y: y + 11, class: 'st-bar-label', text: r.label }),
-      svgEl('rect', { x: 44, y: y + 2, width: w, height: rowH - 5, rx: 2, fill: r.colour ?? colour }),
-      svgEl('text', { x: 48 + w, y: y + 11, class: 'st-bar-value', text: fmt(r.value) }));
-  });
-  return el('div', { class: 'st-card', 'data-testid': 'studio-chart' }, [el('h3', { text: title }), svg, unit ? el('p', { class: 'st-card-note', text: unit }) : null]);
+/** Ticks for an axis: five round-ish values from hi to lo. */
+function ticks(lo, hi) {
+  return [0, 0.25, 0.5, 0.75, 1].map(f => hi - f * (hi - lo));
+}
+const SI = { f: 1e-15, p: 1e-12, n: 1e-9, u: 1e-6, m: 1e-3, k: 1e3, meg: 1e6, g: 1e9, t: 1e12 };
+/** "2m" -> 0.002, "1.5meg" -> 1.5e6, "3e-3" -> 0.003 (the SPICE suffixes a limit is written in). */
+export const siValue = text => {
+  const m = /^(-?\d*\.?\d+(?:e[-+]?\d+)?)(meg|[fpnumkgt])?$/i.exec(text);
+  return m ? Number(m[1]) * (m[2] ? SI[m[2].toLowerCase()] : 1) : NaN;
+};
+
+/** A number with an SI prefix, as engineers read it: 0.0033 -> 3.3m, 4700 -> 4.7k. */
+export const tickText = (v, digits = 2) => {
+  const a = Math.abs(v);
+  if (a === 0 || !Number.isFinite(v)) return '0';
+  const P = [[1e9, 'G'], [1e6, 'M'], [1e3, 'k'], [1, ''], [1e-3, 'm'], [1e-6, 'u'], [1e-9, 'n'], [1e-12, 'p']];
+  const [f, p] = P.find(([x]) => a >= x * 0.9995) ?? P.at(-1);
+  return `${Number((v / f).toPrecision(digits))}${p}`;
+};
+
+/**
+ * One check as a trace: x is the fault number (0 = the original design), y the
+ * value the solver measured for that check under that fault. Its limits are
+ * the dashed lines. Points with no number (NOT_CHECKED, ERROR) leave a gap.
+ */
+export function checkTrace(state, testId, shown) {
+  const t = state.tests[testId];
+  const subjects = ['baseline', ...(state.mutantOrder ?? []).slice(0, shown)];
+  const pts = subjects.map((s, i) => ({ i, r: t.results[s] })).map(({ i, r }) => ({ i, v: typeof r?.measured === 'number' ? r.measured : null, verdict: r?.verdict ?? null }));
+  const nums = pts.filter(p => p.v !== null).map(p => p.v);
+  // Limits as the check states them: "2m .. 5m", "< 100m", "> -40m".
+  const lim = String(t.results.baseline?.limit ?? '');
+  const lims = [...lim.matchAll(/-?\d*\.?\d+(?:e[-+]?\d+)?(?:meg|[fpnumkgt])?/gi)].map(m => siValue(m[0])).filter(Number.isFinite);
+  return { t, pts, nums, lims };
 }
 
-function waveChart(payload, i) {
-  const W = 300, H = 110, P = 4;
-  const xs = payload.x.values;
-  const colours = ['#38bdf8', '#fb923c', '#7ee787', '#d2a8ff'];
+function traceCard(state, testId, shown, total, colour) {
+  const { t, pts, nums, lims } = checkTrace(state, testId, shown);
+  if (!nums.length) return null;
+  let lo = Math.min(...nums, ...lims), hi = Math.max(...nums, ...lims);
+  if (hi === lo) { hi += Math.abs(hi) * 0.1 || 1; lo -= Math.abs(lo) * 0.1 || 1; }
+  const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+  const W = 300, H = 78, X = i => (total ? (i / total) * W : 0), Y = v => 2 + ((hi - v) / (hi - lo)) * 74;
+  let d = '';
+  pts.forEach((p, k) => { if (p.v === null) return; d += `${k && pts[k - 1].v !== null ? 'L' : 'M'}${X(p.i).toFixed(1)},${Y(p.v).toFixed(1)}`; });
+  const last = pts.at(-1);
+  const tone = last?.verdict === 'PASS' ? 'good' : last?.verdict === 'FAIL' ? 'bad' : 'warn';
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', class: 'kv-trace-svg', role: 'img', 'aria-label': `${t.title} trace` }, [
+    svgEl('path', { d: 'M50 0V78M100 0V78M150 0V78M200 0V78M250 0V78M0 20H300M0 58H300', stroke: '#1A202B', 'stroke-width': 1, 'vector-effect': 'non-scaling-stroke' }),
+    ...lims.map(l => svgEl('path', { d: `M0 ${Y(l).toFixed(1)}H300`, stroke: '#F59E0B', 'stroke-width': 1, 'stroke-dasharray': '4 3', 'vector-effect': 'non-scaling-stroke', opacity: 0.8 })),
+    svgEl('path', { d, fill: 'none', stroke: colour, 'stroke-width': 1.6, 'stroke-linejoin': 'round', 'vector-effect': 'non-scaling-stroke' }),
+    ...pts.filter(p => p.v !== null && p.verdict === 'FAIL').map(p => svgEl('circle', { cx: X(p.i), cy: Y(p.v), r: 2.2, fill: '#34D399', 'vector-effect': 'non-scaling-stroke' })),
+  ]);
+  return el('div', { class: 'kv-trace', 'data-testid': 'studio-trace', 'data-test': testId }, [
+    el('div', { class: 'kv-trace-ticks' }, ticks(lo, hi).map(v => el('span', { text: tickText(v) }))),
+    el('div', { class: 'kv-trace-plot' }, [svg, el('div', { class: 'kv-trace-label' }, [
+      el('span', { class: 'kv-trace-name', text: t.title ?? testId }),
+      el('span', { class: `kv-trace-val tone-${tone}`, text: last?.v !== null && last?.v !== undefined ? `${tickText(last.v, 3)}${t.results.baseline?.units ?? ''}` : (last?.verdict ?? '—') }),
+    ])]),
+  ]);
+}
+
+function waveCard(payload, colourIdx) {
+  const xs = payload.x.values, colours = ['#38BDF8', '#FB923C', '#34D399', '#C4B5FD'];
   const all = payload.series.flatMap(s => s.values);
-  const lo = Math.min(...all), hi = Math.max(...all), span = hi - lo || 1;
-  const x0 = xs[0], xspan = xs[xs.length - 1] - x0 || 1;
-  const svg = svgEl('svg', { class: 'st-wave', viewBox: `0 0 ${W} ${H}`, width: '100%' });
-  for (let g = 1; g < 4; g++) svg.append(svgEl('line', { x1: 0, x2: W, y1: (H * g) / 4, y2: (H * g) / 4, class: 'st-grid' }));
-  payload.series.slice(0, 4).forEach((s, k) => {
-    const pts = s.values.map((v, j) => `${(((xs[j] - x0) / xspan) * (W - 2 * P) + P).toFixed(1)},${(H - P - ((v - lo) / span) * (H - 2 * P)).toFixed(1)}`).join(' ');
-    svg.append(svgEl('polyline', { points: pts, fill: 'none', stroke: colours[k], 'stroke-width': 1.3 }));
-  });
-  return el('div', { class: 'st-card', 'data-testid': 'studio-wave' }, [
-    el('h3', { text: `Waveform ${i + 1} · ${payload.analysis}` }), svg,
-    el('p', { class: 'st-card-note' }, payload.series.slice(0, 4).map((s, k) => el('span', { class: 'st-key' }, [el('i', { style: `background:${colours[k]}` }), `${s.name} ${lo.toPrecision(3)}…${hi.toPrecision(3)} ${s.unit}`]))),
+  const lo = Math.min(...all), hi = Math.max(...all), span = hi - lo || 1, x0 = xs[0], xs1 = xs.at(-1) - x0 || 1;
+  const svg = svgEl('svg', { viewBox: '0 0 300 78', preserveAspectRatio: 'none', class: 'kv-trace-svg' }, [
+    svgEl('path', { d: 'M50 0V78M100 0V78M150 0V78M200 0V78M250 0V78M0 20H300M0 58H300', stroke: '#1A202B', 'stroke-width': 1, 'vector-effect': 'non-scaling-stroke' }),
+    ...payload.series.slice(0, 2).map((s, k) => svgEl('polyline', { fill: 'none', stroke: colours[(colourIdx + k) % 4], 'stroke-width': 1.6, 'vector-effect': 'non-scaling-stroke',
+      points: s.values.map((v, j) => `${(((xs[j] - x0) / xs1) * 300).toFixed(1)},${(2 + ((hi - v) / span) * 74).toFixed(1)}`).join(' ') })),
+  ]);
+  return el('div', { class: 'kv-trace', 'data-testid': 'studio-wave' }, [
+    el('div', { class: 'kv-trace-ticks' }, ticks(lo, hi).map(v => el('span', { text: tickText(v) }))),
+    el('div', { class: 'kv-trace-plot' }, [svg, el('div', { class: 'kv-trace-label' }, [el('span', { class: 'kv-trace-name', text: payload.series.slice(0, 2).map(s => s.name).join(', ') }),
+      el('span', { class: 'kv-trace-val tone-idle', text: `${payload.analysis}` })])]),
   ]);
 }
 
-function instruments(state, ctx, field) {
-  const cards = [];
-  const s = state.score;
-  const tele = [
-    ['Mutation score', s ? (s.score === null ? '—' : `${(s.score * 100).toFixed(1)}%`) : 'running', s?.cap?.bites ? `capped at ${(s.cap.applied_at * 100).toFixed(0)}%` : null],
-    ['Faults caught', s ? `${s.killed} / ${s.killed + s.survived}` : `${Object.values(state.mutants).filter(m => m.status === 'killed').length}`, null],
-    ['Hottest point', field?.drawn ? `${field.peak_c.toFixed(1)} °C` : '—', field?.drawn ? 'CalculiX' : 'no field'],
-    ['Board power', field?.power_source?.balance ? fmtW(field.total_w) : '—', field?.power_source?.balance ? 'ngspice' : null],
-  ];
-  cards.push(el('div', { class: 'st-card st-tele', 'data-testid': 'studio-telemetry' }, [el('h3', { text: 'Telemetry outputs' }),
-    el('div', { class: 'st-tele-grid' }, tele.map(([k, v, note]) => el('div', { class: 'st-tele-item' }, [el('span', { class: 'st-tele-k', text: k }), el('strong', { text: v }), note ? el('span', { class: `st-tele-n${/capped/.test(note) ? ' warn' : ''}`, text: note }) : null])))]));
-
-  // Waveforms the run recorded (transient blocks).
+function instruments(state, ctx, field, shown) {
+  const total = (state.mutantOrder ?? []).length;
+  const traces = [];
   const waves = state.artifacts.filter(a => a.kind === 'waveform' && a.mime === 'application/json');
-  waves.slice(0, 3).forEach((a, i) => {
-    const p = ctx.artifactUrl ? loaded(ctx.artifactUrl(a), ctx) : undefined;
-    if (p?.series?.length) cards.push(waveChart(p, i));
-  });
-  if (!waves.length) cards.push(el('p', { class: 'st-foot', text: 'No waveforms: this suite has no transient (tran) block, so there is no signal over time to plot.' }));
-
-  if (field?.drawn) {
-    const hot = Object.entries(field.parts).sort((a, b) => b[1].peak_c - a[1].peak_c).slice(0, 8);
-    cards.push(barChart('Peak temperature per part', hot.map(([ref, p]) => ({ label: ref, value: p.peak_c - field.inputs.ambient_c.value, colour: '#fb923c' })),
-      { unit: `rise above ${field.inputs.ambient_c.value} °C ambient, K — CalculiX`, fmt: v => `+${v.toFixed(2)} K` }));
+  waves.slice(0, 2).forEach((a, i) => { const p = ctx.artifactUrl ? loaded(ctx.artifactUrl(a), ctx) : undefined; if (p?.series?.length) traces.push(waveCard(p, i * 2)); });
+  const colours = ['#38BDF8', '#38BDF8', '#FB923C', '#FB923C'];
+  for (const tid of state.testOrder.filter(x => x !== 'design')) {
+    if (traces.length >= 4) break;
+    const c = traceCard(state, tid, shown, total, colours[traces.length]);
+    if (c) traces.push(c);
   }
-  if (field?.power_w) {
-    const pw = Object.entries(field.power_w).filter(([, p]) => p.watts > 0).sort((a, b) => b[1].watts - a[1].watts).slice(0, 8);
-    if (pw.length) cards.push(barChart('Power per part', pw.map(([ref, p]) => ({ label: ref, value: p.watts, colour: p.note ? '#8a8f98' : '#38bdf8' })),
-      { unit: `ngspice, ${field.power_source.analysis}; grey = a stand-in model`, fmt: fmtW }));
-  }
-  const perPart = new Map();
-  for (const id of state.mutantOrder ?? []) {
-    const m = state.mutants[id];
-    const r = perPart.get(m.target) ?? { caught: 0, missed: 0 };
-    if (m.status === 'killed') r.caught += 1; else if (m.status === 'survived') r.missed += 1;
-    perPart.set(m.target, r);
-  }
-  const worst = [...perPart].filter(([, r]) => r.missed).sort((a, b) => b[1].missed - a[1].missed).slice(0, 8);
-  if (worst.length) cards.push(barChart('Faults not caught, per part', worst.map(([ref, r]) => ({ label: ref, value: r.missed, colour: '#f43f5e' })), { unit: 'injected by the Fault Inspector, judged by ngspice', fmt: v => String(v) }));
-
-  return el('section', { class: 'st-col st-right' }, [
-    el('header', { class: 'st-col-head' }, [el('h2', { text: '3. Physics instrumentation & telemetry' })]),
-    el('div', { class: 'st-cards' }, cards),
+  const s = state.score;
+  const caught = (state.mutantOrder ?? []).slice(0, shown).reduce((a, id) => { const st = state.mutants[id].status; a[st] = (a[st] ?? 0) + 1; return a; }, {});
+  const tele = [
+    ['Score', s && shown >= total ? `${pct(s.score)}${s.cap?.bites ? ` → ${(s.cap.applied_at * 100).toFixed(0)}%` : ''}` : '—', s?.cap?.bites ? 'warn' : 'good'],
+    ['Caught', `${caught.killed ?? 0} / ${(caught.killed ?? 0) + (caught.survived ?? 0)}`, (caught.survived ?? 0) ? 'bad' : 'good'],
+    ['Hottest', field?.drawn ? `${field.peak_c.toFixed(1)}°C ${hottestParts(field, 1)[0]?.ref ?? ''}` : '—', field?.drawn ? 'good' : 'idle'],
+    ['Board power', field?.power_source?.balance ? fmtW(field.total_w) : '—', 'idle'],
+  ];
+  const bars = field?.drawn ? Object.entries(field.parts).sort((a, b) => b[1].peak_c - a[1].peak_c).slice(0, 6) : [];
+  const amb = field?.inputs?.ambient_c?.value;
+  const maxRise = bars.length ? bars[0][1].peak_c - amb : 1;
+  return el('section', { class: 'kv-card kv-right', 'aria-label': 'Physics instrumentation and controls' }, [
+    el('div', { class: 'kv-card-head' }, [el('div', { class: 'kv-h', text: '3. Physics instrumentation & controls panel' })]),
+    el('div', { class: 'kv-traces' }, traces.length ? [
+      ...traces,
+      el('div', { class: 'kv-trace-x' }, [0, 0.25, 0.5, 0.75, 1].map(f => el('span', { text: String(Math.round(f * total)) }))),
+      el('div', { class: 'kv-trace-note', text: 'x: fault number (0 = the design as drawn) · dashed: the check\'s limits · green dot: the check caught that fault' }),
+    ] : [el('p', { class: 'kv-muted', text: 'No numeric check results yet.' })]),
+    el('div', { class: 'kv-section', 'data-testid': 'studio-telemetry' }, [
+      el('div', { class: 'kv-section-h', text: 'Telemetry outputs' }),
+      el('div', { class: 'kv-tele' }, tele.map(([k, v, tone]) => el('div', {}, [el('span', { class: 'kv-tele-k', text: `${k}: ` }), el('span', { class: `kv-tele-v tone-${tone}`, text: v })]))),
+    ]),
+    el('div', { class: 'kv-section' }, [
+      el('div', { class: 'kv-section-h', text: 'Temperature per part' }),
+      bars.length ? el('div', { class: 'kv-bars' }, bars.map(([ref, p]) => el('div', { class: 'kv-bar' }, [
+        el('span', { class: 'kv-bar-k', text: ref }),
+        el('span', { class: 'kv-bar-track' }, [el('i', { style: `width:${(((p.peak_c - amb) / maxRise) * 100).toFixed(1)}%;background:rgb(${thermalRamp(0.4 + 0.6 * (p.peak_c - amb) / maxRise).join(',')})` })]),
+        el('span', { class: 'kv-bar-v', text: `${p.peak_c.toFixed(1)}°C` }),
+      ]))) : el('p', { class: 'kv-muted', text: 'No temperature field in this run.' }),
+      el('div', { class: 'kv-rig', title: 'MuJoCo is installed, but this design has no mechanism to simulate' }, ['Kinematic rig: not connected (no mechanism in this design)']),
+    ]),
   ]);
 }
 
-/** The three studio columns for a run. */
+/** The studio for a run. */
 export function renderStudio(state, ctx) {
   const views = Object.fromEntries((state.artifacts ?? []).filter(a => a.test_id === 'design').map(a => [a.artifact_id, a]));
   const parts = views.parts && ctx.artifactUrl ? loaded(ctx.artifactUrl(views.parts), ctx) : null;
@@ -296,10 +428,13 @@ export function renderStudio(state, ctx) {
     poll();
     setInterval(poll, 3000);
   }
-  return el('main', { class: 'studio', 'data-testid': 'studio' }, [
-    terminal(state, ctx, field ?? null),
-    centre(state, ctx, views, parts ?? null, field ?? null),
-    instruments(state, ctx, field ?? null),
+  const shown = shownCount(state);
+  return el('div', { class: 'kv', 'data-testid': 'studio' }, [
+    header(state, ctx, shown),
+    el('main', { class: 'kv-main' }, [
+      terminal(state, ctx, field ?? null, shown),
+      viewport(state, ctx, views, parts ?? null, field ?? null, shown),
+      instruments(state, ctx, field ?? null, shown),
+    ]),
   ]);
 }
-

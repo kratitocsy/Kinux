@@ -25,6 +25,9 @@ let stageEntry = null;
  * @param {Set<string>} o.selection
  * @param {(ref) => void} o.onSelect
  */
+/** The current stage's toolbar actions, once the board has loaded. */
+export const stageActions = () => stageEntry?.actions ?? null;
+
 export function studioStage(o) {
   if (!stageEntry || stageEntry.url !== o.glbUrl) stageEntry = build(o);
   stageEntry.update(o);
@@ -130,7 +133,7 @@ function build(o) {
           const side = sx < w / 2 ? 'left' : 'right';
           const k = sideCount[side]++;
           const lx = side === "left" ? 16 : w - 86, ly = 56 + k * 52;
-          lines.append(svgEl('line', { x1: sx, y1: sy, x2: side === 'left' ? lx + 172 : lx - 172, y2: ly + 14, class: `st3d-leader tone-${c.tone}` }),
+          lines.append(svgEl('line', { x1: sx, y1: sy, x2: side === 'left' ? lx + 196 : lx - 196, y2: ly + 14, class: `st3d-leader tone-${c.tone}` }),
             svgEl('circle', { cx: sx, cy: sy, r: 3.5, class: `st3d-dot tone-${c.tone}` }));
           labels.append(el('div', { class: `st3d-callout tone-${c.tone}`, 'data-testid': 'studio-callout', 'data-ref': c.ref,
             style: `top:${ly}px;${side === "left" ? `left:${lx}px` : "right:86px"}`, onclick: () => entry.last.onSelect?.(c.ref) }, [c.text]));
@@ -138,10 +141,22 @@ function build(o) {
       };
       controls.enableDamping = false;
       controls.addEventListener('change', draw);
-      const reset = el('button', { type: 'button', class: 'st-chip st3d-reset', 'data-testid': 'studio-reset-view', onclick: () => {
-        camera.position.copy(centre).add(home); controls.target.copy(centre); controls.update(); draw();
-      } }, ['Reset view']);
-      root.append(reset);
+      // The viewport toolbar's actions: what the left mouse button does, zoom, wireframe, reset.
+      let wire = false;
+      entry.actions = {
+        orbit: () => { controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE; root.dataset.drag = 'orbit'; },
+        pan: () => { controls.mouseButtons.LEFT = THREE.MOUSE.PAN; root.dataset.drag = 'pan'; },
+        zoom: f => { camera.position.sub(controls.target).multiplyScalar(f).add(controls.target); controls.update(); draw(); },
+        wireframe: () => {
+          wire = !wire;
+          gltf.scene.traverse(m => { if (m.isMesh) m.material.wireframe = wire; });
+          root.dataset.wireframe = String(wire);
+          draw();
+          return wire;
+        },
+        reset: () => { camera.position.copy(centre).add(home); controls.target.copy(centre); controls.update(); draw(); },
+      };
+      root.dataset.drag = 'orbit';
       // Axis gizmo: the camera's real orientation (x along the board, y up, z toward the viewer).
       const axes = svgEl('svg', { class: 'st3d-axes', viewBox: '-32 -32 64 64' });
       root.append(axes);

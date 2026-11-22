@@ -32,7 +32,7 @@ export function createViewer(root, { waveforms = {}, onSelect, artifactUrl = nul
   function render() {
     if (!state) return;
     const selection = expandSelection(state, selectedId);
-    const ctx = { selection, selectedId, onSelect: select, waveforms, artifactUrl, activityUrl, rerender: () => render() };
+    const ctx = { selection, selectedId, onSelect: select, waveforms, artifactUrl, activityUrl, rerender: () => render(), setLayout: k => { mode = k; render(); } };
 
     clear(titlebar);
     shell.classList.toggle('is-studio', mode === 'studio');

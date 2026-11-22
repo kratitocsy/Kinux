@@ -80,19 +80,22 @@ test('browser: the studio shows the conversation, the solved field with its call
 
   // Terminal: run start, heat, a fault line and a verdict line per mutant, the score.
   const who = await page.$$eval('[data-testid=terminal-msg]', m => m.map(x => x.dataset.who));
-  assert.equal(who.filter(w => w === 'villain').length, mutants.length);
+  assert.equal(who.filter(w => w === 'inspector').length, mutants.length);
   assert.equal(who.filter(w => w === 'solver').length, mutants.length + 1, 'one verdict per fault, plus the heat solve');
-  const names = await page.$$eval('[data-testid=terminal-msg] .tm-who strong', s => [...new Set(s.map(x => x.textContent))]);
-  assert.ok(names.includes('Fault Inspector') && names.includes('Kinux Builder Bot'), names.join(', '));
+  const names = await page.$$eval('[data-testid=terminal-msg] .kv-name', s => [...new Set(s.map(x => x.firstChild.textContent))]);
+  assert.ok(names.includes('Fault Inspector') && names.includes('Solver'), names.join(', '));
   const survived = mutants.filter(e => e.data.status === 'survived').length;
-  assert.equal(await page.locator('.tm-verdict.tone-bad').count(), survived, 'every NOT CAUGHT is a survivor in the events');
+  const tags = await page.$$eval('.kv-tag', t => t.map(x => x.textContent));
+  assert.equal(tags.filter(x => x === 'MISSED').length, survived, 'every MISSED is a survivor in the events');
+  assert.equal(tags.filter(x => x === 'CAUGHT').length, mutants.filter(e => e.data.status === 'killed').length);
+  assert.ok(await page.locator('[data-testid=studio-trace]').count() > 0, 'checks are drawn as traces');
 
   // Stage: callouts name the hottest parts with the field's own numbers.
   const callouts = await page.$$eval('[data-testid=studio-callout]', c => c.map(x => ({ ref: x.dataset.ref, text: x.textContent })));
   const hottest = Object.entries(field.parts).sort((a, b) => b[1].peak_c - a[1].peak_c)[0];
   assert.equal(callouts[0].ref, hottest[0]);
   assert.ok(callouts[0].text.includes(hottest[1].peak_c.toFixed(1)), callouts[0].text);
-  assert.ok((await page.textContent('[data-testid=studio-telemetry]')).includes(`${field.peak_c.toFixed(1)} °C`));
+  assert.ok((await page.textContent('[data-testid=studio-telemetry]')).includes(`${field.peak_c.toFixed(1)}°C`));
 
   // Faults mode: callouts are the parts with surviving faults, and no field is shown.
   await page.click('[data-testid=studio-mode-faults]');
@@ -100,6 +103,18 @@ test('browser: the studio shows the conversation, the solved field with its call
   const faultRefs = await page.$$eval('[data-testid=studio-callout]', c => c.map(x => x.dataset.ref));
   assert.ok(faultRefs.length > 0 && faultRefs.every(r => missed.has(r)), faultRefs.join(','));
   assert.equal(await page.locator('[data-testid=hf-colour-bar]').count(), 0);
+
+  // Replay: reset shows no faults; one step shows the first fault and its verdict, and its part is called out.
+  await page.click('[data-testid=studio-reset]');
+  assert.equal((await page.textContent('[data-testid=studio-step]')).trim(), `Fault 0 / ${mutants.length}`);
+  assert.equal(await page.locator('[data-who=inspector]').count(), 0);
+  await page.click('[data-testid=studio-next]');
+  assert.equal(await page.locator('[data-who=inspector]').count(), 1);
+  const first = mutants[0].data;
+  assert.equal(await page.getAttribute('[data-who=inspector]', 'data-ref'), first.target);
+  await page.waitForFunction(r => [...document.querySelectorAll('[data-testid=studio-callout]')].some(c => c.dataset.ref === r), first.target);
+  assert.equal((await page.textContent('[data-testid=studio-phase]')).trim(), first.status === 'killed' ? 'Fault caught' : first.status === 'survived' ? 'Fault missed' : 'Not checked');
+  await page.click('[data-testid=studio-all]');
 
   // PCB tab: the field lies under KiCad's drawing.
   await page.click('[data-testid=studio-mode-heat]');
