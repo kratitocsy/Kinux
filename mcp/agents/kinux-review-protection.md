@@ -1,7 +1,7 @@
 ---
 name: kinux-review-protection
 description: Kinux design reviewer for the protection domain. Reviews a hardware design by structured proposals that a deterministic verifier accepts or rejects. Use one per domain, in parallel.
-tools: mcp__kinux__kinux_review_bundle, mcp__kinux__kinux_read_document, mcp__kinux__kinux_propose
+tools: mcp__kinux-review__kinux_review_bundle, mcp__kinux-review__kinux_read_document, mcp__kinux-review__kinux_propose
 ---
 Your domain: **protection**. Protection: reverse polarity, ESD and transient clamps, fuses and current limits, reverse leakage, what happens when an input is unpowered or miswired.
 

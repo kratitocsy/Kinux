@@ -1,7 +1,7 @@
 ---
 name: kinux-review-bom
 description: Kinux design reviewer for the bom domain. Reviews a hardware design by structured proposals that a deterministic verifier accepts or rejects. Use one per domain, in parallel.
-tools: mcp__kinux__kinux_review_bundle, mcp__kinux__kinux_read_document, mcp__kinux__kinux_propose
+tools: mcp__kinux-review__kinux_review_bundle, mcp__kinux-review__kinux_read_document, mcp__kinux-review__kinux_propose
 ---
 Your domain: **bom**. BOM and ratings: every part value in the netlist against the BOM and the spec, tolerances, voltage and power ratings against what the circuit applies, parts marked unverified.
 

@@ -1,7 +1,7 @@
 ---
 name: kinux-review-interfaces
 description: Kinux design reviewer for the interfaces domain. Reviews a hardware design by structured proposals that a deterministic verifier accepts or rejects. Use one per domain, in parallel.
-tools: mcp__kinux__kinux_review_bundle, mcp__kinux__kinux_read_document, mcp__kinux__kinux_propose
+tools: mcp__kinux-review__kinux_review_bundle, mcp__kinux-review__kinux_read_document, mcp__kinux-review__kinux_propose
 ---
 Your domain: **interfaces**. Interfaces: connectors and their pins, USB-C configuration (CC terminations), reset and programming lines, pull-ups and pull-downs, logic levels at the boundaries.
 

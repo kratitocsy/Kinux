@@ -66,7 +66,7 @@ async function initialised(s) {
   return init;
 }
 
-test('initialises, states the verdict contract, and lists exactly seven Builder tools with no escape hatch', async () => {
+test('initialises, states the verdict contract, and lists exactly eight Builder tools with no escape hatch', async () => {
   const s = startServer();
   try {
     const init = await initialised(s);
@@ -75,7 +75,7 @@ test('initialises, states the verdict contract, and lists exactly seven Builder 
     assert.match(init.result.instructions, /NOT_CHECKED and ERROR are never a pass/);
     const { result } = await s.rpc('tools/list', {});
     assert.deepEqual(result.tools.map(t => t.name).sort(), ['kinux_cancel_run', 'kinux_doctor', 'kinux_get_findings',
-      'kinux_get_status', 'kinux_open_viewer', 'kinux_start_run', 'kinux_wait_for_run']);
+      'kinux_get_status', 'kinux_open_viewer', 'kinux_render', 'kinux_start_run', 'kinux_wait_for_run']);
     for (const t of result.tools) {
       assert.equal(t.inputSchema.additionalProperties, false, t.name);
       const props = Object.keys(t.inputSchema.properties ?? {});
@@ -260,4 +260,33 @@ test('a review over MCP: proposals are verified or rejected at once, the report 
     const log = readFileSync(join(r.dir, 'review.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
     assert.deepEqual(log.map(e => e.status), ['verified', 'verified', 'rejected', 'verified']);
   } finally { r.stop(); }
+});
+
+
+test('open_viewer serves the run to a person on 127.0.0.1, behind a path token, and nothing outside the run', async () => {
+  const s = startServer();
+  try {
+    await initialised(s);
+    const { run_id } = (await s.call('kinux_start_run', {})).structuredContent;
+    let st;
+    do { st = (await s.call('kinux_wait_for_run', { seconds: 55 })).structuredContent; } while (st.state === 'running');
+    const v = (await s.call('kinux_open_viewer', {})).structuredContent;
+    assert.match(v.viewer_url, /^http:\/\/127\.0\.0\.1:\d+\/t\/[A-Za-z0-9_-]{20,}\/viewer\/index\.html\?run=/);
+    const page = await fetch(v.viewer_url);
+    assert.equal(page.status, 200);
+    assert.match(await page.text(), /importmap/);
+    const base = v.viewer_url.split('/viewer/')[0];
+    const events = await fetch(`${base}/runs/${run_id}/events.jsonl`);
+    assert.equal(events.status, 200);
+    assert.ok((await events.text()).includes('"run.started"'));
+    const origin = new URL(v.viewer_url).origin;
+    for (const bad of [`${origin}/viewer/index.html`, `${origin}/t/wrongtoken/runs/${run_id}/events.jsonl`,
+      `${base}/runs/${run_id}/../../../etc/passwd`, `${base}/runs/${run_id}/%2e%2e/%2e%2e/etc/passwd`,
+      `${base}/runs/../events.jsonl`, `${base}/runs/rffffffff/events.jsonl`, `${base}/viewer/../../package.json`]) {
+      assert.equal((await fetch(bad)).status, 404, bad);
+    }
+    const r = await s.call('kinux_render', {});
+    assert.equal(r.isError, true, 'a .cir design has no 3D board to render');
+    assert.equal(r.structuredContent.error, 'no_board');
+  } finally { s.stop(); }
 });

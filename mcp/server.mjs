@@ -78,7 +78,8 @@ export const TOOLS = [
     inputSchema: { type: 'object', properties: { run_id: RUN_ID, seconds: { type: 'number', minimum: 0, maximum: WAIT_CAP_SECONDS } }, additionalProperties: false } },
   { name: 'kinux_get_findings', description: 'The result of a finished run: baseline, score with its interval and checkable fraction, cap, and the survivors (faults no check caught). While a run is going, only its state is returned.', inputSchema: OPTIONAL_RUN },
   { name: 'kinux_cancel_run', description: 'Stop a running run. A cancelled run has no score.', inputSchema: OPTIONAL_RUN },
-  { name: 'kinux_open_viewer', description: 'Where to read a run: the report and event files. A live browser view is not wired in v0.', inputSchema: OPTIONAL_RUN },
+  { name: 'kinux_open_viewer', description: 'A local URL (127.0.0.1) where the person can watch and read a run: the log, the score, the KiCad schematic, PCB and 3D board with every part coloured by the run, and the waveforms. Give the URL to the person.', inputSchema: OPTIONAL_RUN },
+  { name: 'kinux_render', description: 'Render a finished run\'s 3D board with Blender, each part tinted by what the run found, for a report or a slide. Returns the image URL and a sidecar tracing it to the run. Needs Blender; takes seconds to a minute.', inputSchema: OPTIONAL_RUN },
 ];
 
 const STR = { type: 'string', maxLength: 2000 };
@@ -176,6 +177,11 @@ export function createServer(opts, { log = () => {} } = {}) {
       ...(run.state === 'failed' ? { reason: run.reason } : {}) };
   }
 
+  // The local viewer server starts on first use (kinux_open_viewer, kinux_render).
+  let viewerPromise = null;
+  const getViewer = () => (viewerPromise ??= import('./viewer-server.mjs')
+    .then(m => m.startViewerServer({ runsDir, viewerRoot: join(ROOT, 'viewer') })));
+
   let reviewPromise = null;
   const getReview = () => (reviewPromise ??= (async () => {
     const { buildBundle, createReview } = await import('../engine/review.mjs');
@@ -236,7 +242,8 @@ export function createServer(opts, { log = () => {} } = {}) {
       if (active) throw new ToolError('busy', `run ${active.id} is still running; wait for it or cancel it`, { run_id: active.id });
       const id = `r${randomBytes(4).toString('hex')}`;
       const out = join(runsDir, id);
-      const args = [CLI, 'verify', opts.design, '--checks', opts.checks, '--out', out, '--threshold', '0', '--quiet', '--run-id', id];
+      // --waveforms: a person may open this run, so record the original design's transients for the viewer.
+      const args = [CLI, 'verify', opts.design, '--checks', opts.checks, '--out', out, '--threshold', '0', '--quiet', '--run-id', id, '--waveforms'];
       if (opts.sidecar) args.push('--sidecar', opts.sidecar);
       if (opts['model-dir']) args.push('--model-dir', opts['model-dir']);
       if (opts['thermal-model']) args.push('--thermal-model', opts['thermal-model']);
@@ -303,10 +310,24 @@ export function createServer(opts, { log = () => {} } = {}) {
       return status(run);
     },
 
-    kinux_open_viewer: args => {
+    kinux_open_viewer: async args => {
       const run = pick(args);
-      return { run_id: run.id, report_md: join(run.out, 'report.md'), report_json: join(run.out, 'report.json'),
-        events: join(run.out, 'events.jsonl'), live_viewer: 'not wired in v0' };
+      const v = await getViewer();
+      return { run_id: run.id, state: run.state, viewer_url: v.viewerUrl(run.id), report_md_url: v.fileUrl(run.id, 'report.md'),
+        note: run.state === 'running' ? 'The run is still going: reload the page to see more of it.' : 'Local to this machine. The page reads the run\'s own files; nothing is uploaded.' };
+    },
+
+    kinux_render: async args => {
+      const run = pick(args);
+      if (run.state !== 'done') throw new ToolError('not_done', `run ${run.id} is ${run.state}; render a finished run`);
+      const { renderRun } = await import('../engine/render.mjs');
+      let side;
+      try { side = await renderRun(run.out, { out: join(run.out, 'render.png'), samples: 32, width: 1600, height: 1000 }); }
+      catch (e) { throw new ToolError(e.code === 3 ? 'blender_missing' : e.code === 2 ? 'no_board' : 'render_failed', e.message); }
+      const v = await getViewer();
+      return { run_id: run.id, image_url: v.fileUrl(run.id, 'render.png'), sidecar_url: v.fileUrl(run.id, 'render.json'),
+        tinted: side.tinted_in_image, legend: side.legend, renderer: side.renderer,
+        note: 'Colours are the worst mutant per part from this run; the geometry is KiCad\'s export. A picture, not a verdict.' };
     },
   };
 
@@ -369,6 +390,7 @@ export function createServer(opts, { log = () => {} } = {}) {
 
   function shutdown() {
     for (const r of runs.values()) if (r.state === 'running') { r.state = 'cancelled'; r.child.kill('SIGTERM'); }
+    if (viewerPromise) viewerPromise.then(v => v.close()).catch(() => {});
   }
 
   return { handle, shutdown, runs };
