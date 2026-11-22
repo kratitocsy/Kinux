@@ -373,7 +373,7 @@ function waveCard(payload, colourIdx) {
   // A fast signal (more edges than the plot has pixels) is shown by its final
   // samples at full resolution, as the solver wrote them.
   const crossingsOf = y => { const m = (Math.max(...y) + Math.min(...y)) / 2; let c = 0; for (let i = 1; i < y.length; i++) if ((y[i - 1] - m) * (y[i] - m) < 0) c++; return c; };
-  const zoom = payload.detail && crossingsOf(payload.series[0].values) > 60;
+  const zoom = payload.detail && payload.series.some(s => crossingsOf(s.values) > 60);
   const view = zoom ? { x: { values: payload.detail.x }, series: payload.series.map((s, k) => ({ ...s, values: payload.detail.series[k] })) } : payload;
   payload = { ...payload, x: view.x, series: view.series, zoomNote: zoom ? `last ${tickText(payload.detail.x.at(-1) - payload.detail.x[0], 3)}s, full resolution` : null };
   const xs = payload.x.values, colours = ['#38BDF8', '#FB923C', '#34D399', '#C4B5FD'];
