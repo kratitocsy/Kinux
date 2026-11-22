@@ -364,6 +364,8 @@ export async function runVerification(options) {
     stopOnKill = false,
     designViews = [],
     waveformsDir = null,
+    heat = null,
+    onHeat = null,
     onArtifactBytes = null,
     useQueue = true,
     queuePath = ':memory:',
@@ -416,6 +418,19 @@ export async function runVerification(options) {
       stream.emit('test.artifact', { test_id: w.test_id, artifact_id: w.artifact_id, kind: w.kind, uri: `waves/${w.file}`,
         sha256: w.sha256, bytes: w.bytes, mime: w.mime }, { kind: 'solver', id: 'ngspice-worker' });
     }
+  }
+
+  // The board's temperature field, from ngspice power and a CalculiX solve:
+  // for people to look at; it judges nothing and is drawn only when converged.
+  if (heat) {
+    const { boardHeatArtifact } = await import('./board-heat.mjs');
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { payload, artifact } = await boardHeatArtifact({ netlist, suite, spec: heat.spec, pcbText: heat.pcbText, outDir: heat.outDir, compat, timeoutMs });
+    if (onArtifactBytes) onArtifactBytes(readFileSync(join(heat.outDir, artifact.file)));
+    stream.emit('test.artifact', { test_id: 'design', artifact_id: artifact.artifact_id, kind: artifact.kind, uri: `heat/${artifact.file}`,
+      sha256: artifact.sha256, bytes: artifact.bytes, mime: artifact.mime }, { kind: 'solver', id: 'calculix' });
+    onHeat?.(payload);
   }
 
   // --- 2. Mutants. ---------------------------------------------------------

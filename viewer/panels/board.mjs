@@ -86,7 +86,7 @@ function heatFor(ref, thermal) {
   return { ...heatColour(t, thermal.min, thermal.max), label: `${t.toFixed(1)} °C` };
 }
 
-function view2d(key, url, parts, status, selection, ctx, label, thermal = null) {
+export function view2d(key, url, parts, status, selection, ctx, label, thermal = null, underlay = null) {
   let entry = cache.get(`${key}:node`);
   if (!entry) {
     const img = el('img', { class: 'bv-img', alt: label });
@@ -109,7 +109,9 @@ function view2d(key, url, parts, status, selection, ctx, label, thermal = null) 
   }
   entry.redraw = () => {
     const shown = thermal ? parts.filter(p => thermal.temps.has(p.ref)) : parts;
-    entry.overlay.replaceChildren(...shown.map(p => marker2d(p, status.get(p.ref), selection.has(p.ref), ctx.onSelect, entry.unit ?? 2.6, heatFor(p.ref, thermal))));
+    const under = underlay ? [svgEl('image', { href: underlay.href, x: underlay.x, y: underlay.y, width: underlay.w, height: underlay.h,
+      preserveAspectRatio: 'none', opacity: 0.8, 'data-testid': 'bv-heat-underlay' })] : [];
+    entry.overlay.replaceChildren(...under, ...shown.map(p => marker2d(p, status.get(p.ref), selection.has(p.ref), ctx.onSelect, entry.unit ?? 2.6, heatFor(p.ref, thermal))));
     entry.stage.dataset.ready = entry.ready ? 'true' : 'false';
   };
   entry.redraw();

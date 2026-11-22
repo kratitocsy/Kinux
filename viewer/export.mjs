@@ -24,6 +24,9 @@ export const BUNDLE_MODULES = [
   'panels/board.mjs',
   'panels/design.mjs',
   'panels/instruments.mjs',
+  'heatfield.mjs',
+  'studio3d.mjs',
+  'studio.mjs',
   'app.mjs',
 ];
 

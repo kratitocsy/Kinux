@@ -31,7 +31,9 @@ import { capabilities, seedLibraryTables } from '../workers/pcb/kicad-cli.mjs';
 
 const execFileAsync = promisify(execFile);
 const TIMEOUT_MS = 120_000;
-export const PCB_LAYERS = ['F.Cu', 'B.Cu', 'F.Silkscreen', 'B.Silkscreen', 'Edge.Cuts'];
+// Copper and outline only: silkscreen is the maker's artwork (logos, titles), and the
+// viewer names every part with its own markers.
+export const PCB_LAYERS = ['F.Cu', 'B.Cu', 'Edge.Cuts'];
 
 const sha256 = buf => `sha256:${createHash('sha256').update(buf).digest('hex')}`;
 

@@ -14,9 +14,9 @@
 // error. package.json is frozen, so there is no `npm run verify`; the full
 // invocation is in engine/README.md.
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { makeReceipt } from './receipt.mjs';
-import { join, resolve, extname, dirname } from 'node:path';
+import { basename, join, resolve, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseSimulationBlocks } from '../workers/ngspice/assertions.mjs';
 import { COMPAT_MODES } from '../workers/ngspice/run.mjs';
@@ -61,6 +61,12 @@ export const USAGE = `kinux verify -- mutation-test a circuit's check suite
                       deck, the ngspice version and the compat mode; results do not change
   --waveforms         record the original design's waveforms for every transient block
                       (one more solve per block; on by default with --serve)
+  --heat <file>       solve the board's temperature field (KiCad designs with a
+                      .kicad_pcb): part power measured by ngspice under one
+                      check block, conduction and convection solved by
+                      CalculiX on refining grids, drawn only when converged.
+                      Every material and environment value in <file> must
+                      carry a source (see docs/HEAT.md)
   --stop-on-kill      run each mutant's blocks cheapest first and stop once it is killed;
                       killed/survived are unchanged, killed mutants carry fewer results
   --jobs <n>          run up to n mutants at once (default 1); results and events
@@ -79,7 +85,7 @@ export const USAGE = `kinux verify -- mutation-test a circuit's check suite
 
 /** Parse argv into an options object. Pure, so the tests can use it. */
 export function parseArgs(argv) {
-  const out = { command: null, design: null, checks: null, out: 'kinux-run', threshold: 0.7, limit: Infinity, operators: null, runId: null, project: null, useQueue: true, timeoutMs: undefined, compat: null, jobs: 1, cache: null, stopOnKill: false, waveforms: false, json: false, quiet: false, help: false, serve: false, port: 0, thermalModel: null, sidecar: null, modelDir: null, intent: null };
+  const out = { command: null, design: null, checks: null, out: 'kinux-run', threshold: 0.7, limit: Infinity, operators: null, runId: null, project: null, useQueue: true, timeoutMs: undefined, compat: null, jobs: 1, cache: null, stopOnKill: false, waveforms: false, heat: null, json: false, quiet: false, help: false, serve: false, port: 0, thermalModel: null, sidecar: null, modelDir: null, intent: null };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -116,6 +122,7 @@ export function parseArgs(argv) {
       case '--cache': out.cache = next(); break;
       case '--stop-on-kill': out.stopOnKill = true; break;
       case '--waveforms': out.waveforms = true; break;
+      case '--heat': out.heat = next(); break;
       case '--json': out.json = true; break;
       case '--quiet': out.quiet = true; break;
       default:
@@ -167,7 +174,8 @@ export async function main(argv, io = {}) {
   if (!opts.design) { err('a design netlist is required'); err(USAGE); return 2; }
   if (!opts.checks) { err('--checks is required'); err(USAGE); return 2; }
 
-  let netlist, suite, designModel = null, schematicText = null, designViews = [];
+  if (opts.heat && extname(opts.design).toLowerCase() !== '.kicad_sch') { err('--heat needs a KiCad design (.kicad_sch with a .kicad_pcb beside it)'); return 2; }
+  let netlist, suite, designModel = null, schematicText = null, designViews = [], heat = null;
   const isKicad = extname(opts.design).toLowerCase() === '.kicad_sch';
   if (isKicad) {
     try {
@@ -188,6 +196,13 @@ export async function main(argv, io = {}) {
     } catch (e) {
       // The views are for people; a failure to draw them never stops a run.
       if (!opts.quiet) log(`  views: not exported (${e.message})`);
+    }
+    if (opts.heat) {
+      const pcbPath = resolve(opts.design).replace(/\.kicad_sch$/i, '.kicad_pcb');
+      if (!existsSync(pcbPath)) { err(`--heat needs the board: no ${basename(pcbPath)} beside the schematic`); return 2; }
+      try {
+        heat = { spec: JSON.parse(readFileSync(resolve(opts.heat), 'utf8')), pcbText: readFileSync(pcbPath, 'utf8'), outDir: join(resolve(opts.out), 'heat') };
+      } catch (e) { err(`could not read the heat file ${opts.heat}: ${e.message}`); return 2; }
     }
     mkdirSync(resolve(opts.out), { recursive: true });
     writeFileSync(join(resolve(opts.out), 'design.cir'), netlist, 'utf8');
@@ -285,6 +300,10 @@ export async function main(argv, io = {}) {
       designViews,
       // Waveforms cost one more solve per transient block; on when asked, and when a person is watching.
       waveformsDir: opts.waveforms || opts.serve ? join(resolve(opts.out), 'waves') : null,
+      heat,
+      onHeat: opts.quiet ? null : p => log(p.drawn
+        ? `heat: peak ${p.peak_c.toFixed(2)} degC (ambient ${p.inputs.ambient_c.value}), ${p.total_w.toFixed(4)} W placed, converged over ${p.study.levels.length} grids`
+        : `heat: no field drawn: ${p.verdict} ${p.reason_code}: ${p.reason}`),
       onArtifactBytes: live ? buf => live.server.store.putArtifact(buf) : null,
     });
   } catch (e) {

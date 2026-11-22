@@ -57,6 +57,8 @@ export const SUITES = {
   'kicad-adapter': ['ngspice', 'kicad-cli'],
   'fea': ['ccx', 'gmsh'],
   'render': ['blender', 'kicad-cli'],
+  'board-heat': ['ngspice', 'ccx'],
+  'viewer-studio': ['ngspice', 'ccx', 'kicad-cli'],
 };
 
 /**

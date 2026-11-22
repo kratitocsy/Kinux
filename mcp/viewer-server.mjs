@@ -62,7 +62,7 @@ export async function startViewerServer({ runsDir, viewerRoot, port = 0, activit
   const base = `http://127.0.0.1:${server.address().port}/t/${token}`;
   return {
     base,
-    viewerUrl: runId => `${base}/viewer/index.html?run=${encodeURIComponent(`../runs/${runId}/events.jsonl`)}`,
+    viewerUrl: runId => `${base}/viewer/index.html?run=${encodeURIComponent(`../runs/${runId}/events.jsonl`)}&layout=studio`,
     fileUrl: (runId, rel) => `${base}/runs/${runId}/${rel}`,
     close: () => new Promise(ok => server.close(() => ok())),
   };

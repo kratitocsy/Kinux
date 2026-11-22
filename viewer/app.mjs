@@ -8,9 +8,12 @@ import { createStore, parseJSONL, sourceFromJSONL, sourceFromSSE, badgeFor, expa
 import { renderLogPanel } from './panels/log.mjs';
 import { renderDesignPanel } from './panels/design.mjs';
 import { renderInstrumentsPanel } from './panels/instruments.mjs';
+import { renderStudio } from './studio.mjs';
 
-export function createViewer(root, { waveforms = {}, onSelect, artifactUrl = null, activityUrl = null } = {}) {
+export function createViewer(root, { waveforms = {}, onSelect, artifactUrl = null, activityUrl = null, layout = 'classic' } = {}) {
   let state = null;
+  // 'studio' (one screen: terminal, design, instruments) needs the run's files; 'classic' is every event in full.
+  let mode = layout === 'studio' && artifactUrl ? 'studio' : 'classic';
   let selectedId = null;
 
   const shell = el('div', { class: 'shell' });
@@ -32,21 +35,25 @@ export function createViewer(root, { waveforms = {}, onSelect, artifactUrl = nul
     const ctx = { selection, selectedId, onSelect: select, waveforms, artifactUrl, activityUrl, rerender: () => render() };
 
     clear(titlebar);
+    shell.classList.toggle('is-studio', mode === 'studio');
     const overall = badgeFor(state, 'overall');
-    titlebar.append(
+    titlebar.append(...[
       el('div', { class: 'brand' }, [
+        mode === 'studio' ? el('span', { class: 'brand-logo', html: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2l9 5v10l-9 5-9-5V7zm0 2.3L5 8.2v7.6l7 3.9 7-3.9V8.2zM9 8h2v3.2L14 8h2.6l-3.4 3.6L17 16h-2.6l-2.7-3.1-.7.7V16H9z"/></svg>' }) : null,
         el('span', { class: 'brand-mark', text: 'Kinux' }),
-        el('span', { class: 'brand-sub', text: 'run viewer' }),
+        el('span', { class: 'brand-sub', text: mode === 'studio' ? 'Studio' : 'run viewer' }),
       ]),
       el('div', { class: 'run-id' }, [
-        el('strong', { text: state.run.project ?? state.run.run_id ?? 'no run' }),
+        el('strong', { text: mode === 'studio' ? String(state.run.project ?? state.run.run_id ?? 'no run').split('/').pop() : state.run.project ?? state.run.run_id ?? 'no run' }),
         el('span', { class: 'muted', text: ` ${state.run.run_id ?? ''} · design ${shortHash(state.run.design_hash)} · ${state.eventCount} events` }),
       ]),
+      artifactUrl ? el('div', { class: 'layout-switch', role: 'group' }, [['studio', 'Studio'], ['classic', 'All events']].map(([k, label]) =>
+        el('button', { type: 'button', class: `layout-btn${mode === k ? ' active' : ''}`, 'data-testid': `layout-${k}`, onclick: () => { mode = k; render(); } }, [label]))) : null,
       el('div', { class: 'titlebar-prov' }, [
         el('span', { class: 'prov-caption', text: 'This run is' }),
         provenanceBadge(overall, { panel: 'overall' }),
       ]),
-    );
+    ].filter(Boolean));
     const topNotice = provenanceNotice(overall);
     if (topNotice) {
       topNotice.dataset.testid = 'prov-notice-global';
@@ -54,7 +61,9 @@ export function createViewer(root, { waveforms = {}, onSelect, artifactUrl = nul
     }
 
     clear(panels);
-    panels.append(
+    panels.className = mode === 'studio' ? 'panels-studio' : 'panels';
+    if (mode === 'studio') panels.append(renderStudio(state, ctx));
+    else panels.append(
       renderLogPanel(state, ctx),
       renderDesignPanel(state, ctx),
       renderInstrumentsPanel(state, ctx),
@@ -127,7 +136,7 @@ export async function bootstrap(root = document.getElementById('app')) {
   }
   // Served by an MCP server (mcp/viewer-server.mjs): its agent activity sits beside the runs.
   const activityUrl = runParam ? new URL('../activity.json', globalThis.location.href).href : null;
-  const viewer = mountStore(root, store, { artifactUrl, activityUrl });
+  const viewer = mountStore(root, store, { artifactUrl, activityUrl, layout: params.get('layout') ?? 'classic' });
   try {
     if (sse) {
       await loadInto(store, sourceFromSSE(sse));
