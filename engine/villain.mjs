@@ -114,8 +114,72 @@ export function faultPatch(netlist, fault, n = 1) {
   }
 }
 
+/**
+ * Every fault mode Kinux knows for one element, in the grammar: its value
+ * moved both ways (tolerance, wrong reel, wrong decade), each pin opened, its
+ * pins shorted together, each pin shorted to ground, each pin bridged to every
+ * neighbouring net, and every fixed operator that targets it. A starting
+ * point: the element agent may add its own (a bisected factor, a leak).
+ */
+export function elementModes(nl, ref) {
+  const c = nl.component(ref);
+  if (!c) throw new VillainError(`no part "${ref}"`);
+  const modes = [];
+  if (VALUE_TYPES.has(c.type) && c.tail.some(t => parseValue(t))) {
+    for (const factor of [0.1, 0.5, 0.9, 1.1, 2, 10]) modes.push({ kind: 'value', ref: c.refdes, factor, why: factor === 0.9 || factor === 1.1 ? 'tolerance (±10%)' : factor === 0.5 || factor === 2 ? 'wrong value (×2)' : 'wrong decade' });
+  }
+  c.nodes.forEach((n, i) => modes.push({ kind: 'open', ref: c.refdes, pin: i + 1, why: `pin ${i + 1} (${n}) not connected` }));
+  const own = [...new Set(c.nodes)];
+  if (own.length >= 2) for (let i = 0; i < own.length; i++) for (let j = i + 1; j < own.length; j++) {
+    if (isGround(own[i]) && isGround(own[j])) continue;
+    modes.push({ kind: 'short', a: isGround(own[i]) ? own[j] : own[i], b: isGround(own[i]) ? own[i] : own[j], why: `${c.refdes} shorted across ${own[i]}–${own[j]}` });
+  }
+  for (const n of own) if (!isGround(n) && !own.some(isGround)) modes.push({ kind: 'short', a: n, b: '0', why: `${n} at ${c.refdes} shorted to ground` });
+  const neighbours = new Set();
+  for (const n of own) for (const other of nl.connections(n)) for (const m of other.nodes) if (!own.includes(m) && !isGround(m)) neighbours.add(m);
+  for (const n of own) if (!isGround(n)) for (const m of neighbours) modes.push({ kind: 'short', a: n, b: m, ohms: 0.001, why: `bridge from ${c.refdes}'s ${n} to neighbouring ${m}` });
+  for (const op of OPERATORS) for (const cand of op.candidates(nl)) {
+    const p = op.build(nl, cand);
+    if (p.target === c.refdes) modes.push({ kind: 'operator', operator: op.id, target: cand.key, why: op.title });
+  }
+  return modes;
+}
+
+/** Which checks look at an element: a V()/f() check on one of its nets, or an I() check through it. */
+export function observers(nl, suite, ref) {
+  const c = nl.component(ref);
+  const nets = new Set(c ? c.nodes : []);
+  const out = [];
+  for (const b of suite.blocks) for (const a of b.assertions ?? []) {
+    const m = a.measurable;
+    if (!m) continue;
+    const hit = ((m.kind === 'voltage' || m.kind === 'frequency') && nets.has(m.target))
+      || (m.kind === 'current' && String(m.target).toLowerCase() === String(ref).toLowerCase());
+    if (hit) out.push({ id: `${suite.id}:${b.prefix}:${a.line}`, check: a.raw, how: m.kind === 'current' ? 'through it' : `on its net ${m.target}` });
+  }
+  return out;
+}
+
+/**
+ * The largest voltage the circuit's own sources could plausibly put on a net,
+ * times FLOAT_MARGIN. A baseline node voltage beyond it is not a voltage: it is
+ * a floating net the solver could not pin down (a block that drives only some
+ * inputs leaves the rest of the circuit with no reference), and its value says
+ * nothing. Such vectors are reported as unmeasured, never used as evidence.
+ */
+export const FLOAT_MARGIN = 100;
+export function plausibleVoltage(netlistText, block) {
+  let max = 1;
+  for (const c of parseNetlist(netlistText).components) {
+    if (c.type !== 'V') continue;
+    for (const t of c.tail) { const v = parseValue(t); if (v) max = Math.max(max, Math.abs(v.number)); }
+  }
+  for (const s of block.sources ?? []) max = Math.max(max, Math.abs(Number(s.value.value)));
+  return max * FLOAT_MARGIN;
+}
+
 /** Run one block and record every net voltage and source current. */
-async function behaviourBlock(netlistText, block, nets, { compat, timeoutMs }) {
+async function behaviourBlock(netlistText, block, nets, { compat, timeoutMs, bound = Infinity }) {
   const body = netlistText.split('\n').filter(l => !/^\s*\.end\s*$/i.test(l)).join('\n');
   const sources = (block.sources ?? []).map((s, i) => `Vksrc${i + 1} ${s.port} 0 DC ${Number(s.value.value).toExponential(12)}`);
   const vecs = [...nets.map(n => `v(${n})`), ...sources.map((_, i) => `i(vksrc${i + 1})`)];
@@ -133,9 +197,10 @@ async function behaviourBlock(netlistText, block, nets, { compat, timeoutMs }) {
     const vectors = {};
     vecs.forEach((name, i) => {
       const y = cols[i + 1];
-      if (block.analysis.kind !== 'tran') { vectors[name] = { dc: y[0] }; return; }
+      const floating = name.startsWith('v(') && y.some(x => Math.abs(x) > bound);
+      if (block.analysis.kind !== 'tran') { vectors[name] = { dc: y[0], ...(floating ? { floating: true } : {}) }; return; }
       const lo = Math.min(...y), hi = Math.max(...y);
-      vectors[name] = { min: lo, max: hi, mean: trapezoidAverage(t, y), y, t };
+      vectors[name] = { min: lo, max: hi, mean: trapezoidAverage(t, y), y, t, ...(floating ? { floating: true } : {}) };
     });
     return { ok: true, vectors };
   } finally {
@@ -151,7 +216,9 @@ export async function behaviour(netlistText, suite, nets, opts = {}) {
   const blocks = [];
   for (const block of suite.blocks) {
     if (block.kind === 'thermal' || !block.analysis) continue;
-    blocks.push({ prefix: block.prefix, kind: block.analysis.kind, ...(await behaviourBlock(netlistText, block, nets, opts)) });
+    // The bound comes from the design as given (opts.boundFrom), so a fault cannot move it.
+    const bound = plausibleVoltage(opts.boundFrom ?? netlistText, block);
+    blocks.push({ prefix: block.prefix, kind: block.analysis.kind, bound, ...(await behaviourBlock(netlistText, block, nets, { ...opts, bound })) });
   }
   return blocks;
 }
@@ -166,10 +233,17 @@ export function harmOf(base, mut) {
     const m = mut.find(x => x.prefix === b.prefix);
     if (!b.ok) continue;
     if (!m?.ok) { unmeasured.push(`${b.prefix}: ${m?.reason_code ?? 'not run'}`); continue; }
+    const floating = Object.entries(b.vectors).filter(([, v]) => v.floating).map(([n]) => n);
+    if (floating.length) unmeasured.push(`${b.prefix}: ${floating.length} net(s) float on the baseline (beyond ±${b.bound} V, e.g. ${floating[0]} = ${b.vectors[floating[0]].dc ?? b.vectors[floating[0]].max}); not used as evidence`);
     for (const [name, bv] of Object.entries(b.vectors)) {
       const mv = m.vectors[name];
-      if (!mv) continue;
+      if (!mv || bv.floating) continue;
       const floor = name.startsWith('i(') ? 1e-6 : 0.05;
+      // The fault leaves this net with no reference: it changed, but the solver's number is not a voltage.
+      if (name.startsWith('v(') && ['dc', 'min', 'max'].some(k => k in mv && Math.abs(mv[k]) > b.bound)) {
+        deltas.push({ block: b.prefix, vector: name, feature: 'floats under the fault', baseline: bv.dc ?? bv.mean, faulted: null, rel: 1 });
+        continue;
+      }
       const add = (feature, x, y, scale) => deltas.push({ block: b.prefix, vector: name, feature, baseline: x, faulted: y, rel: Math.abs(y - x) / Math.max(scale, floor) });
       if ('dc' in bv) { add('dc', bv.dc, mv.dc, Math.abs(bv.dc)); continue; }
       const scale = Math.max(Math.abs(bv.max), Math.abs(bv.min), bv.max - bv.min);
@@ -207,59 +281,111 @@ export function createVillain({ netlist: netlistText, suite: rawSuite, compat = 
   const nl = parseNetlist(netlistText);
   const nets = netsOf(nl).filter(n => SAFE_NET.test(n)).slice(0, MAX_NETS);
   const log = [];
-  let base = null;
+  const inflight = new Map(); // netlist sha -> id, for faults still being solved
+  let issued = 0;
+  let basePromise = null;
+
+  const tried = ref => log.filter(r => r.target === ref || (r.fault.ref === ref) || (r.fault.kind === 'short' && nl.component(ref)?.nodes.some(n => n === r.fault.a || n === r.fault.b)));
+  const sorted = () => [...log].sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)));
 
   const session = {
-    log,
+    get log() { return sorted(); },
     design_hash: sha256(netlistText),
-    async init() {
-      if (base) return base;
-      const checks = await runChecks(netlistText, suite, { compat, timeoutMs });
-      const gate = new BaselineGate(checks.results);
-      const beh = await behaviour(netlistText, suite, nets, { compat, timeoutMs });
-      base = { checks: checks.results, gate, beh };
-      return base;
+    init() {
+      return (basePromise ??= (async () => {
+        const checks = await runChecks(netlistText, suite, { compat, timeoutMs });
+        const gate = new BaselineGate(checks.results);
+        const beh = await behaviour(netlistText, suite, nets, { compat, timeoutMs });
+        return { checks: checks.results, gate, beh };
+      })());
     },
-    async brief() {
+    /** The whole design, or with `ref` one element: its pins, neighbours, the checks that see it, its fault modes. */
+    async brief({ ref } = {}) {
       const b = await session.init();
-      return { design_hash: session.design_hash, budget_left: budget - log.length, ...briefOf(nl, suite, b.gate, b.checks),
-        tried: log.map(r => ({ id: r.id, fault: r.fault, status: r.status, harm: r.harm })) };
+      if (ref) {
+        const c = nl.component(ref);
+        if (!c) throw new VillainError(`no part "${ref}" (parts: ${nl.components.map(x => x.refdes).join(', ')})`);
+        return {
+          design_hash: session.design_hash, budget_left: budget - issued, grammar: GRAMMAR, goal: briefOf(nl, suite, b.gate, b.checks).goal,
+          element: { ref: c.refdes, type: c.type, value: c.tail.join(' '), pins: c.nodes.map((n, i) => ({ pin: i + 1, net: n, also_on_net: nl.connections(n).filter(x => x !== c).map(x => x.refdes) })) },
+          observed_by: observers(nl, suite, c.refdes),
+          checks: b.checks.map(r => ({ id: r.test_id, check: r.assertion, baseline: r.verdict, measured: r.measured ?? null })),
+          analyses: suite.blocks.filter(x => x.analysis).map(x => ({ block: x.prefix, analysis: x.analysis.raw, sources: (x.sources ?? []).map(s2 => `${s2.port}=${s2.value.value}`) })),
+          modes: elementModes(nl, c.refdes),
+          tried: tried(c.refdes).map(r => ({ id: r.id, fault: r.fault, status: r.status, harm: r.harm })),
+        };
+      }
+      return { design_hash: session.design_hash, budget_left: budget - issued, ...briefOf(nl, suite, b.gate, b.checks),
+        tried: sorted().map(r => ({ id: r.id, fault: r.fault, status: r.status, harm: r.harm, agent: r.agent })) };
     },
-    async inject(fault) {
+    /** How to split the work: one entry per element, with how many fault modes it has and whether any check sees it. */
+    async plan() {
+      await session.init();
+      return {
+        design_hash: session.design_hash, budget_left: budget - issued,
+        elements: nl.components.filter(c => !/^V(KSRC|KP)/i.test(c.refdes)).map(c => {
+          const obs = observers(nl, suite, c.refdes);
+          return { ref: c.refdes, type: c.type, nets: c.nodes, modes: elementModes(nl, c.refdes).length, observed_by: obs.length, tried: tried(c.refdes).length,
+            unobserved: obs.length === 0 };
+        }),
+        advice: 'Dispatch one element agent per element (in parallel). Unobserved elements (no check on their nets or through them) and elements with many modes come first. Split the budget across them.',
+      };
+    },
+    async inject(fault, { agent = null } = {}) {
       const b = await session.init();
-      if (log.length >= budget) throw new VillainError(`the budget of ${budget} faults is used up`);
-      const id = `V${log.length + 1}`;
+      if (issued >= budget) throw new VillainError(`the budget of ${budget} faults is used up`);
       let p, applied;
       try {
-        p = faultPatch(nl, fault, log.length + 1);
+        p = faultPatch(nl, fault, issued + 1);
         applied = applyPatch(nl, p);
       } catch (e) {
         if (e instanceof VillainError || e instanceof PatchError) throw new VillainError(`refused: ${e.message}`);
         throw e;
       }
-      const dup = log.find(r => r.netlist_sha256 === sha256(applied.text));
+      const key = sha256(applied.text);
+      const dup = log.find(r => r.netlist_sha256 === key);
       if (dup) throw new VillainError(`refused: the same faulted circuit as ${dup.id} (${dup.description})`);
-      const checks = await runChecks(applied.text, suite, { subject: id, compat, timeoutMs });
-      const cls = classifyMutant(b.gate, checks.results);
-      const mbeh = await behaviour(applied.text, suite, nets, { compat, timeoutMs });
-      const h = harmOf(b.beh, mbeh);
-      const rec = {
-        id, fault, description: p.description, target: p.target, netlist_sha256: sha256(applied.text),
-        status: cls.status, killed_by: cls.killed_by, why: cls.why,
-        harm: h.harm, harmful: h.harm !== null && h.harm >= HARMFUL,
-        evidence: h.top.map(d => ({ ...d, rel: Number(d.rel.toPrecision(4)) })), unmeasured: h.unmeasured,
-        results: checks.results.map(r => ({ test_id: r.test_id, verdict: r.verdict, measured: r.measured ?? null, reason_code: r.reason_code ?? null })),
-      };
-      log.push(rec);
-      return rec;
+      if (inflight.has(key)) throw new VillainError(`refused: the same faulted circuit as ${inflight.get(key)}, still being solved`);
+      issued += 1;
+      const id = `V${issued}`;
+      inflight.set(key, id);
+      try {
+        const checks = await runChecks(applied.text, suite, { subject: id, compat, timeoutMs });
+        const cls = classifyMutant(b.gate, checks.results);
+        const mbeh = await behaviour(applied.text, suite, nets, { compat, timeoutMs, boundFrom: netlistText });
+        const h = harmOf(b.beh, mbeh);
+        const rec = {
+          id, agent, fault, description: p.description, target: p.target, netlist_sha256: key,
+          status: cls.status, killed_by: cls.killed_by, why: cls.why,
+          harm: h.harm, harmful: h.harm !== null && h.harm >= HARMFUL,
+          evidence: h.top.map(d => ({ ...d, rel: Number(d.rel.toPrecision(4)) })), unmeasured: h.unmeasured,
+          results: checks.results.map(r => ({ test_id: r.test_id, verdict: r.verdict, measured: r.measured ?? null, reason_code: r.reason_code ?? null })),
+        };
+        log.push(rec);
+        return rec;
+      } finally {
+        inflight.delete(key);
+      }
     },
     report() {
-      const missedHarmful = log.filter(r => r.status === 'survived' && r.harmful).sort((a, b) => b.harm - a.harm);
-      const count = s => log.filter(r => r.status === s).length;
+      const all = sorted();
+      const missedHarmful = all.filter(r => r.status === 'survived' && r.harmful).sort((a, b) => b.harm - a.harm);
+      const count = st => all.filter(r => r.status === st).length;
+      const perElement = {};
+      for (const c of nl.components) {
+        const rs = tried(c.refdes);
+        if (!rs.length) continue;
+        const modes = elementModes(nl, c.refdes).length;
+        perElement[c.refdes] = { tried: rs.length, modes, killed: rs.filter(r => r.status === 'killed').length, missed: rs.filter(r => r.status === 'survived').length,
+          missed_harmful: rs.filter(r => r.status === 'survived' && r.harmful).map(r => r.id), observed_by: observers(nl, suite, c.refdes).length };
+      }
       return {
-        tried: log.length, killed: count('killed'), survived: count('survived'), not_checked: count('not_checked'), errors: count('error'),
-        missed_harmful: missedHarmful.map(r => ({ id: r.id, description: r.description, harm: r.harm, worst: r.evidence[0] })),
-        missed_low_harm: log.filter(r => r.status === 'survived' && !r.harmful).map(r => ({ id: r.id, description: r.description, harm: r.harm })),
+        tried: all.length, killed: count('killed'), survived: count('survived'), not_checked: count('not_checked'), errors: count('error'),
+        agents: [...new Set(all.map(r => r.agent).filter(Boolean))],
+        missed_harmful: missedHarmful.map(r => ({ id: r.id, agent: r.agent, description: r.description, harm: r.harm, worst: r.evidence[0] })),
+        missed_low_harm: all.filter(r => r.status === 'survived' && !r.harmful).map(r => ({ id: r.id, description: r.description, harm: r.harm })),
+        per_element: perElement,
+        untouched: nl.components.map(c => c.refdes).filter(r => !perElement[r]),
       };
     },
   };
@@ -271,7 +397,7 @@ export async function replayVillain(opts, log) {
   const s = createVillain(opts);
   const out = [];
   for (const r of log) {
-    const again = await s.inject(r.fault);
+    const again = await s.inject(r.fault, { agent: r.agent ?? null });
     out.push({ id: r.id, same: again.status === r.status && again.netlist_sha256 === r.netlist_sha256
       && JSON.stringify(again.killed_by) === JSON.stringify(r.killed_by) && again.harmful === r.harmful });
   }

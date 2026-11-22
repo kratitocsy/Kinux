@@ -94,6 +94,43 @@ test('harm features: a transient shifted in time is not harmed; a changed level 
   assert.deepEqual(failed.unmeasured, ['b0: sim_nonconverge']);
 });
 
+test('element modes cover every way one part can fail, and parallel agents never run the same fault twice', async () => {
+  const { elementModes, observers } = await import('../engine/villain.mjs');
+  const { parseNetlist } = await import('../engine/netlist.mjs');
+  const { normaliseSuite } = await import('../engine/runner.mjs');
+  const nl = parseNetlist(netlist);
+  const modes = elementModes(nl, 'R3');
+  assert.deepEqual(modes.filter(m => m.kind === 'value').map(m => m.factor), [0.1, 0.5, 0.9, 1.1, 2, 10]);
+  assert.deepEqual(modes.filter(m => m.kind === 'open').map(m => m.pin), [1, 2]);
+  const shorts = modes.filter(m => m.kind === 'short').map(m => `${m.a}-${m.b}`);
+  for (const s of ['mid-out', 'mid-0', 'out-0', 'mid-vcc']) assert.ok(shorts.includes(s), `${s} in ${shorts}`);
+  assert.deepEqual(observers(nl, normaliseSuite(loadSuite(THOROUGH)), 'R3').map(o => o.how).sort(), ['on its net mid', 'on its net out', 'on its net out', 'on its net out']);
+  const v = createVillain({ netlist, suite: loadSuite(WEAK) });
+  const out = await Promise.allSettled([1, 2, 3].map(() => v.inject({ kind: 'value', ref: 'R3', factor: 10 }, { agent: 'R3' })));
+  assert.equal(out.filter(o => o.status === 'fulfilled').length, 1, 'three agents, one fault: solved once');
+  assert.ok(out.filter(o => o.status === 'rejected').every(o => /same faulted circuit/.test(o.reason.message)));
+  const rep = v.report();
+  assert.equal(rep.per_element.R3.tried, 1);
+  assert.ok(rep.untouched.includes('C2'));
+});
+
+test('floating nets are never evidence: not on the baseline, and not as a raw number under a fault', async () => {
+  const { plausibleVoltage } = await import('../engine/villain.mjs');
+  assert.equal(plausibleVoltage(netlist, { sources: [] }), 500, 'the 5 V source, times the margin');
+  assert.equal(plausibleVoltage(netlist, { sources: [{ port: 'x', value: { value: 12 } }] }), 1200);
+  // As on quiet-orbit's CC-only block: the baseline itself floats at -8.7e7 V.
+  const base = [{ prefix: 'b3', ok: true, bound: 500, vectors: { 'v(VBUS)': { dc: -86921839.3, floating: true }, 'v(CC1)': { dc: 5 } } }];
+  const hit = harmOf(base, [{ prefix: 'b3', ok: true, vectors: { 'v(VBUS)': { dc: 2.4e-18 }, 'v(CC1)': { dc: 5 } } }]);
+  assert.equal(hit.harm, 0, 'the floating net is not harm');
+  assert.match(hit.unmeasured[0], /float on the baseline/);
+  // A fault that leaves a well-defined net floating: changed, recorded as such, at 100% rather than its raw value.
+  const ok = [{ prefix: 'b0', ok: true, bound: 500, vectors: { 'v(out)': { dc: 2.4 } } }];
+  const fl = harmOf(ok, [{ prefix: 'b0', ok: true, vectors: { 'v(out)': { dc: -3e7 } } }]);
+  assert.equal(fl.harm, 1);
+  assert.equal(fl.top[0].feature, 'floats under the fault');
+  assert.equal(fl.top[0].faulted, null);
+});
+
 test('a villain log replays with no model, record for record', async () => {
   const opts = { netlist, suite: loadSuite(THOROUGH) };
   const v = createVillain(opts);
@@ -118,12 +155,19 @@ test('MCP: --role villain lists only the villain tools, injects through Kinux, a
     const init = await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '0' } });
     assert.match(init.result.instructions, /You are the Villain/);
     const list = await rpc('tools/list', {});
-    assert.deepEqual(list.result.tools.map(t => t.name), ['kinux_villain_brief', 'kinux_inject_fault', 'kinux_villain_report']);
+    assert.deepEqual(list.result.tools.map(t => t.name), ['kinux_villain_plan', 'kinux_villain_brief', 'kinux_inject_fault', 'kinux_villain_report']);
+    const plan = (await rpc('tools/call', { name: 'kinux_villain_plan', arguments: {} })).result.structuredContent;
+    assert.deepEqual(plan.elements.filter(e => e.unobserved).map(e => e.ref), ['R2', 'R3', 'C2', 'RL'], 'the weak suite looks only at vcc');
+    const one = (await rpc('tools/call', { name: 'kinux_villain_brief', arguments: { ref: 'R3' } })).result.structuredContent;
+    assert.equal(one.element.ref, 'R3');
+    assert.deepEqual(one.observed_by, []);
+    assert.ok(one.modes.some(m => m.kind === 'open' && m.pin === 2) && one.modes.some(m => m.kind === 'short' && m.a === 'mid' && m.b === 'out'));
     const brief = (await rpc('tools/call', { name: 'kinux_villain_brief', arguments: {} })).result.structuredContent;
     assert.ok(brief.parts.some(p => p.ref === 'R2') && brief.nets.some(n => n.net === 'out'));
     assert.equal(brief.checks.length, 1);
-    const hit = (await rpc('tools/call', { name: 'kinux_inject_fault', arguments: { kind: 'short', a: 'out', b: '0', ohms: 1000 } })).result;
+    const hit = (await rpc('tools/call', { name: 'kinux_inject_fault', arguments: { kind: 'short', a: 'out', b: '0', ohms: 1000, agent: 'RL' } })).result;
     assert.equal(hit.isError, false);
+    assert.equal(hit.structuredContent.agent, 'RL', 'the fault is attributed to the agent that injected it');
     assert.equal(hit.structuredContent.status, 'survived');
     const bad = (await rpc('tools/call', { name: 'kinux_inject_fault', arguments: { kind: 'value', ref: 'R9', factor: 2 } })).result;
     assert.equal(bad.isError, true);

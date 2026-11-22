@@ -115,6 +115,7 @@ export const VILLAIN_CONTRACT = [
   'You are the Villain: you try to break this design\'s check suite. Propose faults; Kinux applies each one, runs every check with ngspice, and measures how much the circuit\'s behaviour changed (harm).',
   'Your prize is a fault every check still passes but that changes behaviour (survived, harmful). A caught fault shows the checks work; that is also worth knowing.',
   'Read kinux_villain_brief first: parts, nets, checks and what they measure, the analyses, the grammar, and the fixed catalog. Aim where no check looks.',
+  'To attack the whole design, split it: kinux_villain_plan lists every element; give each one to an element agent, which reads kinux_villain_brief with its ref and works through that element\'s fault modes. Tag every fault with agent.',
   'Harm is measured only under the analyses and sources the suite already has. A fault that matters only in a condition no block simulates shows no harm; say so rather than claim it.',
   'You never supply a result. NOT_CHECKED and ERROR are never a catch and never a miss. Finish with kinux_villain_report and tell the person which checks are missing, citing the evidence.',
 ].join('\n');
@@ -125,10 +126,13 @@ const FAULT_SCHEMA = { type: 'object', additionalProperties: false, properties: 
   factor: { type: 'number', minimum: 0.001, maximum: 1000 },
   a: { type: 'string', maxLength: 80 }, b: { type: 'string', maxLength: 80 }, ohms: { type: 'number', minimum: 0.001, maximum: 1e9 },
   operator: { type: 'string', maxLength: 40 }, target: { type: 'string', maxLength: 80 },
+  agent: { type: 'string', maxLength: 40, description: 'who is injecting: your element (e.g. "R4") or "lead"; recorded with the fault' },
 } };
 
 export const VILLAIN_TOOLS = [
-  { name: 'kinux_villain_brief', description: 'Everything you plan from: every part (type, nodes, value), every net with its parts, every check (what it measures, whether it can catch a fault), the analyses, the fault grammar, the fixed operators\' catalog, and the faults tried so far.', inputSchema: NO_ARGS },
+  { name: 'kinux_villain_plan', description: 'How to split the attack: one entry per element with its nets, how many fault modes Kinux knows for it, how many checks observe it, and how many faults were already tried on it. A lead agent dispatches one element agent per entry.', inputSchema: NO_ARGS },
+  { name: 'kinux_villain_brief', description: 'Without arguments: every part, net and check, the analyses, the grammar, the catalog and the faults tried so far. With ref: ONE element in depth: its pins and what else is on each net, the checks that observe it, every fault mode Kinux knows for it (in the grammar, ready to inject), and what was already tried on it.',
+    inputSchema: { type: 'object', properties: { ref: { type: 'string', maxLength: 40 } }, additionalProperties: false } },
   { name: 'kinux_inject_fault', description: [
     'Inject ONE fault; Kinux runs every check on it and measures harm. Kinds:',
     'value {ref, factor 0.001..1000}: multiply a part\'s value.',
@@ -295,12 +299,17 @@ export function createServer(opts, { log = () => {} } = {}) {
   })());
 
   const villainTools = {
-    kinux_villain_brief: async () => (await getVillain()).brief(),
+    kinux_villain_plan: async () => (await getVillain()).plan(),
+    kinux_villain_brief: async (args = {}) => {
+      const { VillainError } = await import('../engine/villain.mjs');
+      try { return await (await getVillain()).brief(args); } catch (e) { if (e instanceof VillainError) throw new ToolError('refused', e.message); throw e; }
+    },
     kinux_inject_fault: async (args = {}) => {
       const v = await getVillain();
       const { VillainError } = await import('../engine/villain.mjs');
       let rec;
-      try { rec = await v.inject(args); } catch (e) {
+      const { agent, ...fault } = args;
+      try { rec = await v.inject(fault, { agent: agent ?? null }); } catch (e) {
         if (e instanceof VillainError) throw new ToolError('refused', e.message);
         throw e;
       }
