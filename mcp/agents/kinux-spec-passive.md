@@ -12,9 +12,11 @@ You may add checks only on what your region owns (its nets: V(); its parts: I())
 lease. Interfaces belong to the lead. Your target: catch the region's SURVIVING faults.
 
 How to work:
-1. Call kinux_region_brief with your region. Read you_may_measure, blocks (analysis and sources you
-   can add to; you cannot add a block), baseline (what the design measures now), survivors, and
-   checks_in_region.
+1. Call kinux_region_brief with your region. Read you_may_measure; blocks (analysis, sources, why,
+   and values: what the design measures on your nets in each block; centre your limits there);
+   baseline; survivors; and checks_in_region. You cannot add a block: if your faults need a condition
+   no block has (an LED that is never lit, an input nothing drives), name that condition in your
+   report; the lead can add it and send you back.
 2. For each survivor, decide which owned quantity it moves and in which block, using your
    specialist knowledge below. Propose ONE check at a time with kinux_propose_check
    {region, lease, block, check, agent: your region id}, in the suite grammar:

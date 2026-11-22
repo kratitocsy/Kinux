@@ -104,7 +104,7 @@ test('MCP: --role team gives the lead and its agents the team tools, and nothing
   try {
     await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '0' } });
     const names = (await rpc('tools/list', {})).result.tools.map(t => t.name);
-    assert.deepEqual(names, ['kinux_team_partition', 'kinux_team_claim', 'kinux_region_brief', 'kinux_propose_check', 'kinux_team_status']);
+    assert.deepEqual(names, ['kinux_team_partition', 'kinux_team_claim', 'kinux_region_brief', 'kinux_propose_check', 'kinux_propose_block', 'kinux_retract_check', 'kinux_team_status']);
     const part = (await call('kinux_team_partition')).structuredContent;
     const region = part.regions.find(r => r.parts.includes('R1')).region;
     const { lease } = (await call('kinux_team_claim', { region, agent: 'alpha' })).structuredContent;
@@ -158,4 +158,65 @@ test('every specialist the partition can name exists as a subagent, on a faster 
   const lead = readFileSync(join(ROOT, 'mcp', 'commands', 'kinux-team.md'), 'utf8');
   assert.match(lead, /^model: opus$/m, 'the lead runs on the stronger model');
   for (const k of Object.keys(SPECIALISTS)) assert.match(lead, new RegExp(`kinux-spec-${k}`));
+});
+
+// An LED whose cathode is an MCU pin: dark unless something sinks it.
+const LED = ['led channel', 'V1 vcc 0 5', 'R1 vcc a 680', 'D1 a k LEDM', 'R9 k 0 100meg', '.model LEDM D(IS=1e-20 N=1.8)', ''].join('\n');
+
+test('blocks: only the lead adds stimulus, with a stated condition; then faults that could not show can be caught', async () => {
+  const t = createTeam({ netlist: LED, suite: WEAK });
+  const part = await t.partition();
+  const g = part.regions.find(r => r.parts.includes('R1')).region;
+  const { lease: L } = await t.claim('interfaces', 'lead');
+  const { lease: G } = await t.claim(g, 'emitter');
+  assert.equal((await t.propose({ region: g, lease: G, block: 'b0', check: 'I(R1) between 4.4m and 5.4m' })).code, 'fails_design', 'dark LED: no current to check');
+  assert.equal((await t.proposeBlock({ lease: G, analysis: 'op', sources: { k: 0 }, why: 'x' })).code, 'no_lease', 'a specialist cannot add stimulus');
+  assert.equal((await t.proposeBlock({ lease: L, analysis: 'op', sources: { k: 0 } })).code, 'no_reason');
+  assert.equal((await t.proposeBlock({ lease: L, analysis: 'op', sources: { vcc: 3 }, why: 'brown-out' })).code, 'bad_source', 'vcc is already driven by V1');
+  assert.equal((await t.proposeBlock({ lease: L, analysis: 'op', sources: { nowhere: 0 }, why: 'x' })).code, 'bad_source');
+  assert.equal((await t.proposeBlock({ lease: L, analysis: 'ac dec 10 1 1k', sources: { k: 0 }, why: 'x' })).code, 'grammar');
+  const b = await t.proposeBlock({ lease: L, analysis: 'op', sources: { k: 0 }, why: 'MCU pin sinks the LED cathode: LED on' });
+  assert.equal(b.status, 'committed');
+  const iR1 = (5 - b.values['v(a)']) / 680;
+  assert.ok(Math.abs(b.values['i(vksrc1)'] - iR1) / iR1 < 1e-4, 'the block reports the solved circuit: the cathode source sinks the R1 current');
+  assert.equal((await t.proposeBlock({ lease: L, analysis: 'op', sources: { k: 0 }, why: 'again' })).code, 'duplicate');
+  const brief = await t.brief(g);
+  assert.ok(brief.blocks.find(x => x.block === b.block).values['v(a)'] > 1, 'specialists see the values on their nets');
+  const c = await t.propose({ region: g, lease: G, block: b.block, check: 'I(R1) between 4.3m and 4.9m' });
+  assert.equal(c.status, 'committed', c.reason);
+  assert.ok(c.kills.length >= 3 && c.global_after > c.global_before);
+  // The suite the team wrote still scores the same from scratch, new block and all.
+  const fresh = createTeam({ netlist: LED, suite: { id: 'checks', blocks: parseSimulationBlocks(t.render()) } });
+  const again = (await fresh.partition()).global;
+  const built = (await t.status()).global;
+  assert.deepEqual({ k: again.killed, s: again.survived }, { k: built.killed, s: built.survived });
+  assert.match(t.render(), /block added by the lead: MCU pin sinks the LED cathode/);
+});
+
+test('interfaces: the lead\'s rail checks may catch any region\'s fault; retracting a check gives its faults back', async () => {
+  const t = createTeam({ netlist: NET, suite: WEAK });
+  await t.partition();
+  const { lease: L } = await t.claim('interfaces', 'lead');
+  const A = t.decomposition.regionOf.get('R1');
+  const { lease: la } = await t.claim(A);
+  const tight = await t.propose({ region: A, lease: la, block: 'b0', check: 'V(a) between 2.49 and 2.51' });
+  assert.equal(tight.status, 'committed', tight.reason);
+  assert.equal((await t.retract({ lease: la, commit: tight.id, reason: 'x' })).code, 'no_lease', 'only the lead retracts');
+  assert.equal((await t.retract({ lease: L, commit: tight.id })).code, 'no_reason');
+  const r = await t.retract({ lease: L, commit: tight.id, reason: '±0.4% is tighter than two 1% resistors hold' });
+  assert.equal(r.status, 'retracted');
+  assert.ok(r.global_after < r.global_before && r.survive_again.length > 0, 'the score falls honestly');
+  assert.doesNotMatch(t.render(), /between 2\.49 and 2\.51/);
+  // The lead holds node a at its nominal level; the rail source then carries R1's current minus R2's,
+  // so a check on it (an interface quantity) catches region A's faults.
+  const b = await t.proposeBlock({ lease: L, analysis: 'op', sources: { a: 2.5 }, why: 'test fixture holds node a at its nominal level' });
+  assert.equal(b.status, 'committed');
+  const c = await t.propose({ region: 'interfaces', lease: L, block: b.block, check: 'I(Vksrc1) between -0.1m and 0.1m' });
+  assert.equal(c.status, 'committed', c.reason);
+  const ofA = new Set(t.decomposition.regions.find(x => x.id === A).parts);
+  assert.ok(c.kills.some(id => [...ofA].some(p => id.includes(p))), `an interface check catches region ${A}'s faults: ${c.kills}`);
+  const fresh = createTeam({ netlist: NET, suite: { id: 'checks', blocks: parseSimulationBlocks(t.render()) } });
+  const again = (await fresh.partition()).global;
+  const built = (await t.status()).global;
+  assert.deepEqual({ k: again.killed, s: again.survived }, { k: built.killed, s: built.survived }, 'and still equals a fresh run');
 });

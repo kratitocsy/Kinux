@@ -528,7 +528,7 @@ function parseScope(raw, line) {
 }
 
 /** @returns {SimulationSource} */
-function parseSource(raw, line) {
+export function parseSource(raw, line) {
   const match = /^([A-Za-z_][A-Za-z0-9_./:+-]*)\s*=\s*(\S+)$/.exec(raw);
   if (!match) {
     throw new SimulationParseError(line, 'source must be "<port>=<number>"', 'invalid_source');

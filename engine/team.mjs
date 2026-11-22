@@ -39,7 +39,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import { parseNetlist, isGround } from './netlist.mjs';
 import { generateMutants } from './operators.mjs';
 import { BaselineGate, classifyMutant, runChecks, normaliseSuite } from './runner.mjs';
-import { parseSpiceAssertion, verifySimulation } from '../workers/ngspice/assertions.mjs';
+import { parseSpiceAssertion, verifySimulation, parseAnalysis, parseSource } from '../workers/ngspice/assertions.mjs';
+import { behaviour } from './villain.mjs';
 
 /** Killed / checkable, with the counts. NOT_CHECKED and ERROR are in neither. */
 export function computeScore(statuses) {
@@ -158,11 +159,12 @@ export function ownerOf(assertion, d) {
 
 /** Render a suite (normalised blocks) back to the markdown grammar it came from. */
 export function renderSuite(suite, commits = []) {
-  const by = new Map(commits.map(c => [`${c.block}:${c.raw}`, c]));
+  const by = new Map(commits.filter(c => !c.retracted).map(c => [`${c.block}:${c.raw}`, c]));
   const out = ['# Check suite (built by a Kinux team)', '', 'Checks added by region agents are marked with the region and the faults they catch.', ''];
   for (const b of suite.blocks) {
-    if (!b.analysis) continue;
+    if (!b.analysis || !(b.assertions ?? []).length) continue;
     out.push('## Simulation', '');
+    if (b.why) out.push(`<!-- block added by the lead: ${b.why} -->`);
     if (b.scope?.kind === 'nets') out.push(`scope: nets [${b.scope.nets.join(', ')}]`);
     out.push(`analysis: ${b.analysis.raw}`);
     for (const s of b.sources ?? []) out.push(`source: ${s.port}=${s.value.raw ?? s.value.value}`);
@@ -195,17 +197,21 @@ export function createTeam({ netlist: netlistText, suite: rawSuite, compat = nul
   let state = null; // {gate, baseline, mutants: [{...m, region, results:Map, status}]}
   let queue = Promise.resolve();
   let nextLine = 100000;
+  const blockValues = {}; // prefix -> {vector: value or {min,max,mean}}, from the solve that admitted the block
+  const retracted = [];
+  // Blocks the lead added but nobody has put a check in yet are not run: a block with no checks judges nothing.
+  const runnable = () => ({ ...suite, blocks: suite.blocks.filter(b => !b.analysis || (b.assertions ?? []).length) });
 
   const regionOfMutant = m => d.regionOf.get(m.target) ?? d.netOwner.get(m.target) ?? 'interfaces';
   const regionIds = () => [...d.regions.map(r => r.id), 'interfaces'];
 
   async function init() {
     if (state) return state;
-    const base = await runChecks(netlistText, suite, { compat, timeoutMs });
+    const base = await runChecks(netlistText, runnable(), { compat, timeoutMs });
     const gate = new BaselineGate(base.results);
     const mutants = generateMutants(nl);
     const judged = await pool(mutants, jobs, async m => {
-      const r = await runChecks(m.text, suite, { subject: m.mutant_id, compat, timeoutMs });
+      const r = await runChecks(m.text, runnable(), { subject: m.mutant_id, compat, timeoutMs });
       const cls = classifyMutant(gate, r.results);
       return { mutant_id: m.mutant_id, target: m.target, description: m.description, text: m.text, region: regionOfMutant(m),
         results: new Map(r.results.map(x => [x.test_id, x])), status: cls.status, killed_by: cls.killed_by };
@@ -258,11 +264,17 @@ export function createTeam({ netlist: netlistText, suite: rawSuite, compat = nul
         ...regionView(region),
         you_may_measure: [...[...owned].map(n => `V(${n})`), ...parts.map(p => `I(${p})`), ...(region === 'interfaces' ? suite.blocks.flatMap(b => (b.sources ?? []).map((_, i) => `I(Vksrc${i + 1})`)) : [])].filter((x, i, a) => a.indexOf(x) === i),
         parts: parts.map(p => { const c = nl.component(p); return { ref: p, type: c.type, nodes: c.nodes, value: c.tail.join(' ') }; }),
-        blocks: suite.blocks.filter(b => b.analysis).map(b => ({ block: b.prefix, analysis: b.analysis.raw, sources: (b.sources ?? []).map(s => `${s.port}=${s.value.value}`) })),
+        blocks: suite.blocks.filter(b => b.analysis).map(b => ({ block: b.prefix, analysis: b.analysis.raw, sources: (b.sources ?? []).map(s => `${s.port}=${s.value.value}`),
+          ...(b.why ? { why: b.why } : {}), checks: (b.assertions ?? []).length,
+          // What the design does in this block, on what you may measure: the centre for your limits.
+          ...(blockValues[b.prefix] ? { values: Object.fromEntries(Object.entries(blockValues[b.prefix]).filter(([k]) => region === 'interfaces' || owned.has(k.slice(2, -1)))) } : {}) })),
         baseline: state.baseline.map(r => ({ id: r.test_id, check: r.assertion, verdict: r.verdict, measured: r.measured ?? null })),
         checks_in_region: ownedChecks,
         survivors: state.mutants.filter(m => m.region === region && m.status === 'survived').map(m => ({ id: m.mutant_id, fault: m.description })),
-        target: 'Add checks that catch your region\'s survivors. Each check must pass on the design and catch at least one survivor.',
+        target: region === 'interfaces'
+          ? 'You are the lead. Add stimulus blocks (kinux_propose_block) where faults cannot show in the blocks that exist; add checks on interface nets, which may catch any region\'s survivors; retract a committed check you judge unrealistic.'
+          : 'Add checks that catch your region\'s survivors. Each check must pass on the design and catch at least one survivor.',
+        ...(region === 'interfaces' ? { all_survivors: state.mutants.filter(m => m.status === 'survived').map(m => ({ id: m.mutant_id, region: m.region, fault: m.description })) } : {}),
       };
     },
     /** Propose one check line into a block. Serialised: judged against the suite as it stands. */
@@ -271,10 +283,24 @@ export function createTeam({ netlist: netlistText, suite: rawSuite, compat = nul
       queue = job.catch(() => {});
       return job;
     },
+    /** The lead adds a block: an analysis and the stimulus that puts the circuit in a real operating condition. */
+    proposeBlock(args) {
+      const job = queue.then(() => judgeBlock(args));
+      queue = job.catch(() => {});
+      return job;
+    },
+    /** The lead takes back a committed check it judges unrealistic; the faults only it caught survive again. */
+    retract(args) {
+      const job = queue.then(() => judgeRetract(args));
+      queue = job.catch(() => {});
+      return job;
+    },
     async status() {
       await init();
       return { regions: regionIds().map(regionView), global: scoreOf(state.mutants), suite_sha256: `sha256:${sha(renderSuite(suite))}`,
-        commits: commits.map(({ id, region, agent, block, raw, kills, global_after }) => ({ id, region, agent, block, check: raw, kills, global_after })),
+        blocks_added: suite.blocks.filter(b => b.why).map(b => ({ block: b.prefix, analysis: b.analysis.raw, why: b.why, checks: b.assertions.length })),
+        retracted: retracted.map(({ id, reason, global_after }) => ({ id, reason, global_after })),
+        commits: commits.map(({ id, region, agent, block, raw, kills, global_after, retracted: r }) => ({ id, region, agent, block, check: raw, kills, global_after, ...(r ? { retracted: true } : {}) })),
         rejected: rejected.length };
     },
     render() { return renderSuite(suite, commits); },
@@ -301,7 +327,8 @@ export function createTeam({ netlist: netlistText, suite: rawSuite, compat = nul
     const br = bl.results[0];
     if (!br || br.verdict !== 'PASS') return reject('fails_design', `the design as drawn gives ${br?.verdict ?? 'nothing'}${br?.measured !== undefined ? ` (measured ${br.measured})` : ''}${br?.reason ? `: ${br.reason}` : ''}. A check the design fails catches nothing; if the design is wrong, that is for a person.`, { measured: br?.measured ?? null });
     // 4. It must catch at least one of the region's survivors.
-    const targets = state.mutants.filter(m => m.region === region && m.status === 'survived');
+    // An interface net (a rail) sees the whole board: the lead's checks may catch any region's survivors.
+    const targets = state.mutants.filter(m => (region === 'interfaces' || m.region === region) && m.status === 'survived');
     const hits = await pool(targets, jobs, async m => {
       const r = await verifySimulation(m.text, one, { subject: m.mutant_id, testIdPrefix: `${suite.id}:${b.prefix}`, compat, timeoutMs });
       return { m, r: r.results[0] };
@@ -312,7 +339,7 @@ export function createTeam({ netlist: netlistText, suite: rawSuite, compat = nul
     const before = scoreOf(state.mutants);
     const prevBlocks = suite.blocks;
     suite = { ...suite, blocks: suite.blocks.map(x => (x.prefix === block ? { ...x, assertions: [...x.assertions, a] } : x)) };
-    const again = await runChecks(netlistText, suite, { compat, timeoutMs });
+    const again = await runChecks(netlistText, runnable(), { compat, timeoutMs });
     const lost = state.baseline.filter(r => r.verdict === 'PASS' && again.results.find(x => x.test_id === r.test_id)?.verdict !== 'PASS');
     const newBase = again.results.find(x => x.test_id.startsWith(`${tid}:`));
     if (lost.length || newBase?.verdict !== 'PASS') {
@@ -336,6 +363,74 @@ export function createTeam({ netlist: netlistText, suite: rawSuite, compat = nul
       suite_sha256: `sha256:${sha(renderSuite(suite))}` };
     commits.push(commit);
     return commit;
+  }
+
+  const leadOk = lease => leases.get('interfaces')?.secret === lease;
+
+  async function judgeBlock({ lease, analysis, sources = {}, why = '', agent = null }) {
+    await init();
+    const reject = (code, reason) => { const r = { status: 'rejected', code, reason, kind: 'block', analysis, sources, agent }; rejected.push(r); return r; };
+    if (!leadOk(lease)) return reject('no_lease', 'only the lead (the holder of the "interfaces" lease) adds blocks: stimulus crosses regions');
+    if (!String(why).trim()) return reject('no_reason', 'say which real operating condition this block stands for (why), e.g. "MCU sinking all four LED cathodes at full brightness"');
+    let an;
+    try { an = parseAnalysis(String(analysis)); } catch (e) { return reject('grammar', e.message); }
+    if (an.kind !== 'op' && an.kind !== 'tran') return reject('grammar', 'a block is an op or tran analysis');
+    const entries = Object.entries(sources ?? {});
+    if (entries.length > 12) return reject('too_many', 'at most 12 sources in a block');
+    const nets = new Set(nl.nodes());
+    const designDriven = new Set(nl.components.filter(c => c.type === 'V').flatMap(c => c.nodes));
+    const parsed = [];
+    for (const [net, v] of entries) {
+      if (isGround(net)) return reject('bad_source', 'ground cannot be driven');
+      if (!nets.has(net)) return reject('bad_source', `no net "${net}" in the netlist`);
+      if (designDriven.has(net)) return reject('bad_source', `${net} is already driven by a source in the design`);
+      let src;
+      try { src = parseSource(`${net}=${v}`, 0); } catch (e) { return reject('grammar', e.message); }
+      if (!Number.isFinite(src.value.value) || Math.abs(src.value.value) > 1000) return reject('bad_source', `${net}: a source from -1000 to 1000 V`);
+      parsed.push(src);
+    }
+    const key = `${an.raw}|${parsed.map(x => `${x.port}=${x.value.value}`).sort().join(',')}`;
+    const dup = suite.blocks.find(b => b.analysis && `${b.analysis.raw}|${(b.sources ?? []).map(x => `${x.port}=${x.value.value}`).sort().join(',')}` === key);
+    if (dup) return reject('duplicate', `block ${dup.prefix} already has this analysis and stimulus`);
+    const prefix = `b${suite.blocks.length}`;
+    const block = { prefix, index: suite.blocks.length, line: 0, scope: { kind: 'nets', nets: parsed.map(x => x.port).length ? parsed.map(x => x.port) : d.interfaces.slice(0, 1) },
+      analysis: an, sources: parsed, assertions: [], why: String(why).slice(0, 300) };
+    // The design must solve under it, and every net must have a real value.
+    const probeNets = nl.nodes().filter(n => !isGround(n) && /^[A-Za-z0-9_./:+-]+$/.test(n)).slice(0, 40);
+    const [beh] = await behaviour(netlistText, { blocks: [block] }, probeNets, { compat, timeoutMs });
+    if (!beh?.ok) return reject('does_not_solve', `the design does not solve under this block: ${beh?.reason_code ?? ''} ${String(beh?.reason ?? '').split('\n')[0]}`);
+    const floating = Object.entries(beh.vectors).filter(([, v]) => v.floating).map(([k]) => k);
+    const values = Object.fromEntries(Object.entries(beh.vectors).filter(([, v]) => !v.floating)
+      .map(([k, v]) => [k, 'dc' in v ? v.dc : { min: v.min, max: v.max, mean: v.mean }]));
+    suite = { ...suite, blocks: [...suite.blocks, block] };
+    blockValues[prefix] = values;
+    return { status: 'committed', kind: 'block', block: prefix, analysis: an.raw, sources: parsed.map(x => `${x.port}=${x.value.value}`), why: block.why, values,
+      floating, note: floating.length ? `${floating.length} net(s) float in this block and cannot be checked in it: ${floating.join(', ')}` : 'every net has a defined value in this block' };
+  }
+
+  async function judgeRetract({ lease, commit: id, reason = '', agent = null }) {
+    await init();
+    if (!leadOk(lease)) return { status: 'rejected', code: 'no_lease', reason: 'only the lead retracts checks' };
+    if (!String(reason).trim()) return { status: 'rejected', code: 'no_reason', reason: 'say why the check is unrealistic' };
+    const c = commits.find(x => x.id === id && !x.retracted);
+    if (!c) return { status: 'rejected', code: 'no_commit', reason: `no live commit ${id}` };
+    const before = scoreOf(state.mutants);
+    suite = { ...suite, blocks: suite.blocks.map(b => (b.prefix === c.block ? { ...b, assertions: b.assertions.filter(a => a.raw !== c.raw) } : b)) };
+    const again = await runChecks(netlistText, runnable(), { compat, timeoutMs });
+    const gate = new BaselineGate(again.results);
+    for (const m of state.mutants) {
+      if (!m.results.has(c.test_id)) continue;
+      m.results.delete(c.test_id);
+      const cls = classifyMutant(gate, [...m.results.values()]);
+      m.status = cls.status; m.killed_by = cls.killed_by;
+    }
+    state.gate = gate; state.baseline = again.results;
+    c.retracted = true;
+    const after = scoreOf(state.mutants);
+    const rec = { status: 'retracted', id, reason: String(reason).slice(0, 300), agent, global_before: before.score, global_after: after.score,
+      survive_again: state.mutants.filter(m => m.status === 'survived' && c.kills.includes(m.mutant_id)).map(m => m.mutant_id) };
+    retracted.push(rec);
+    return rec;
   }
 
   return team;

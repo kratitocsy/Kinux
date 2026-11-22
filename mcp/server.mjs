@@ -149,6 +149,7 @@ export const TEAM_CONTRACT = [
   'A lead claims each region (kinux_team_claim) and gives its lease to exactly ONE region agent. Only that agent can add checks there, and only checks that measure its own region. Interfaces belong to the lead.',
   'Every proposed check goes through one queue: it must parse, belong to the proposer\'s region, PASS on the design as drawn, catch at least one of the region\'s surviving faults, and leave the whole suite passing with the global score not lower. Only then is it committed.',
   'A check the design fails is not added: report it to the person as a possible design problem, with the measured value Kinux returned. Never loosen a limit just to get a check in.',
+  'The lead alone adds stimulus blocks (a real operating condition the existing blocks do not cover) and may retract a committed check that is unrealistic. A block is a claim about how the board is used: state the condition, and never invent one just to make a fault visible.',
 ].join('\n');
 
 export const TEAM_TOOLS = [
@@ -160,6 +161,11 @@ export const TEAM_TOOLS = [
   { name: 'kinux_propose_check', description: 'Propose ONE check line (the suite grammar, e.g. "V(NET) between 2.3 and 2.45" or "I(R4) between 2.7m and 3.3m") into one block, with your region and lease. Kinux judges it at once in the shared queue: committed (with the faults it now catches and the new scores) or rejected with the reason.',
     inputSchema: { type: 'object', properties: { region: { type: 'string', maxLength: 20 }, lease: { type: 'string', maxLength: 40 }, block: { type: 'string', maxLength: 10 },
       check: { type: 'string', maxLength: 200 }, agent: { type: 'string', maxLength: 40 } }, additionalProperties: false } },
+  { name: 'kinux_propose_block', description: 'LEAD ONLY (the "interfaces" lease). Add a simulation block: an analysis (op, or "tran <step> <stop> [uic]") and the stimulus that puts the circuit in a REAL operating condition, e.g. the MCU sinking the LED cathodes, a USB-C source on CC, a load step. Say which condition in why. Kinux solves the design under it and returns every net\'s value, so specialists can centre their limits; it refuses a net already driven by the design, ground, or a block that does not solve. A block with no checks yet is not run.',
+    inputSchema: { type: 'object', properties: { lease: { type: 'string', maxLength: 40 }, analysis: { type: 'string', maxLength: 80 },
+      sources: { type: 'object', maxProperties: 12 }, why: { type: 'string', maxLength: 300 }, agent: { type: 'string', maxLength: 40 } }, additionalProperties: false } },
+  { name: 'kinux_retract_check', description: 'LEAD ONLY. Take back a committed check you judge unrealistic (for example a window tighter than a real board holds). The faults only it caught survive again; the score falls honestly. Give the reason.',
+    inputSchema: { type: 'object', properties: { lease: { type: 'string', maxLength: 40 }, commit: { type: 'string', maxLength: 10 }, reason: { type: 'string', maxLength: 300 }, agent: { type: 'string', maxLength: 40 } }, additionalProperties: false } },
   { name: 'kinux_team_status', description: 'Every region\'s score, the global score, the suite\'s hash, and every commit (who, where, what it catches).', inputSchema: NO_ARGS },
 ];
 
@@ -372,6 +378,16 @@ export function createServer(opts, { log = () => {} } = {}) {
       const { region_after, ...rest } = r;
       return { ...rest, ...(region_after ? { region_score: region_after.score, region_survivors: region_after.survived } : {}) };
     },
+    kinux_propose_block: async (args = {}) => {
+      const t = await getTeam();
+      return t.proposeBlock(args);
+    },
+    kinux_retract_check: async (args = {}) => {
+      const t = await getTeam();
+      const r = await t.retract(args);
+      if (r.status === 'retracted' && opts['suite-out']) writeFileSync(opts['suite-out'], `${t.render()}\n`);
+      return r;
+    },
     kinux_team_status: async () => (await getTeam()).status(),
   };
 
@@ -500,7 +516,7 @@ export function createServer(opts, { log = () => {} } = {}) {
         throw new ToolError('invalid_arguments', `${k} must be a list of short strings`);
       }
       if (sch.type === 'object' && (typeof v !== 'object' || v === null || Array.isArray(v) || Object.keys(v).length > (sch.maxProperties ?? Infinity)
-        || Object.entries(v).some(([kk, vv]) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(kk) || typeof vv !== 'number' || !Number.isFinite(vv)))) {
+        || Object.entries(v).some(([kk, vv]) => !/^[A-Za-z_/][A-Za-z0-9_./:+-]*$/.test(kk) || typeof vv !== 'number' || !Number.isFinite(vv)))) {
         throw new ToolError('invalid_arguments', `${k} must map net names to numbers`);
       }
     }
