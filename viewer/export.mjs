@@ -21,6 +21,7 @@ export const BUNDLE_MODULES = [
   'reducer.mjs',
   'thermal.mjs',
   'panels/log.mjs',
+  'panels/board.mjs',
   'panels/design.mjs',
   'panels/instruments.mjs',
   'app.mjs',
