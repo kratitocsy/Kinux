@@ -33,11 +33,18 @@ export function describeActivity(a) {
       : r.status === 'open' ? 'recorded as an open question for a person' : `rejected: ${r.reason ?? r.message ?? ''}`;
     return { agent: `Reviewer${args.domain ? ` (${args.domain})` : ''}`, action: `${r.id ?? ''} ${what}`.trim(), decision: verdict, ok: r.status !== 'rejected' };
   }
+  if (a.tool === 'kinux_inject_fault') {
+    if (a.isError) return { agent: 'Villain', action: `tried ${JSON.stringify(args)}`, decision: `refused: ${r.message ?? ''}`, ok: false };
+    const verdict = r.status === 'survived'
+      ? `MISSED by every check; harm ${r.harm === null || r.harm === undefined ? 'not measured' : `${(r.harm * 100).toFixed(1)}%`}${r.harmful ? ' (harmful)' : ''}`
+      : r.status === 'killed' ? `caught by ${(r.killed_by ?? []).length} check(s)` : r.status;
+    return { agent: 'Villain', action: `${r.id ?? ''} ${r.description ?? ''}`.trim(), decision: verdict, ok: r.status !== 'survived' || !r.harmful, villain: true, status: r.status };
+  }
   const name = a.tool.replace(/^kinux_/, '').replace(/_/g, ' ');
   if (a.isError) return { agent: 'Builder', action: name, decision: `refused: ${r.message ?? r.error ?? ''}`, ok: false };
   const decision = r.score_text ? `score ${r.score_text}${r.survivors !== undefined ? `; ${r.survivors} faults survived` : ''}`
     : r.run_id ? `run ${r.run_id} ${r.state ?? ''}`.trim() : r.proposals !== undefined ? `${r.proposals} proposals: ${r.verified} verified, ${r.rejected} rejected, ${r.open} open` : '';
-  return { agent: a.role === 'reviewer' ? 'Reviewer' : 'Builder', action: name, decision, ok: true };
+  return { agent: a.role === 'reviewer' ? 'Reviewer' : a.role === 'villain' ? 'Villain' : 'Builder', action: name, decision, ok: true };
 }
 
 function agentActivity(url) {

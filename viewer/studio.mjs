@@ -138,7 +138,7 @@ export function solverReply(state, m) {
 
 const WHO = {
   kinux: ['K', 'Kinux'], builder: ['KB', 'Kinux Builder'], reviewer: ['RV', 'Reviewer'],
-  inspector: ['FI', 'Fault Inspector'], solver: ['S', 'Solver'],
+  inspector: ['FI', 'Fault Inspector'], solver: ['S', 'Solver'], villain: ['VL', 'Villain agent'],
 };
 
 function line(who, text, { tag = null, tone = null, ref = null, sub = null, ctx = null, selected = false } = {}) {
@@ -160,7 +160,12 @@ function terminal(state, ctx, field, shown) {
   items.push(line('kinux', `Run started on ${fileName(state.run.project)}: ${checks} checks, ${(state.mutantOrder ?? []).length} faults to inject.`, { sub: state.run.run_id }));
   for (const a of ui.activity) {
     const d = describeActivity(a);
-    items.push(line(a.role === 'reviewer' ? 'reviewer' : 'builder', `${d.action}${d.decision ? ` → ${d.decision}` : ''}`, { tag: d.ok ? null : 'REFUSED', tone: 'bad', sub: 'via MCP' }));
+    if (d.villain && !a.isError) {
+      items.push(line('villain', d.action, { tag: 'INJECT', tone: 'inject', sub: 'via MCP' }));
+      items.push(line('solver', d.decision, { tag: d.status === 'killed' ? 'CAUGHT' : d.status === 'survived' ? 'MISSED' : 'NOT CHECKED', tone: d.status === 'killed' ? 'good' : d.status === 'survived' ? 'bad' : 'warn' }));
+      continue;
+    }
+    items.push(line(a.role === 'reviewer' ? 'reviewer' : a.role === 'villain' ? 'villain' : 'builder', `${d.action}${d.decision ? ` → ${d.decision}` : ''}`, { tag: d.ok ? null : 'REFUSED', tone: 'bad', sub: 'via MCP' }));
   }
   if (field) {
     items.push(line('solver', field.drawn

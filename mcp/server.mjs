@@ -7,6 +7,8 @@
 //                       [--runs-dir <dir>] [--call-log <file.jsonl>]
 //   node mcp/server.mjs --role reviewer --design <...> [--sidecar ...] --doc <SPEC.md> [--doc ...]
 //                       [--review-log <file.jsonl>]
+//   node mcp/server.mjs --role villain --design <...> --checks <checks.md> [--sidecar ...]
+//                       [--villain-log <file.jsonl>] [--budget <n>]
 //
 // ROLE comes from the launch, never from a tool argument. The Builder role
 // (default) starts runs and reads findings. The Reviewer role reviews the
@@ -30,8 +32,9 @@
 //  * This file is on the agent side. tests/no-model-in-verdict.test.mjs fails
 //    if anything on the verdict path imports it.
 //
-// Not in v0: the Villain role (propose_fault, run_faults, get_survivors), live
-// viewer serving, per-tool schema negotiation beyond `schemaVersion`.
+// The Villain role (engine/villain.mjs) proposes faults in a closed grammar;
+// Kinux applies each one, runs every check and measures the harm with ngspice.
+// A villain cannot start runs, propose review items or supply any result.
 
 import { spawn, execFile } from 'node:child_process';
 import { createInterface } from 'node:readline';
@@ -108,6 +111,35 @@ export const REVIEW_TOOLS = [
   { name: 'kinux_get_review', description: 'The review so far: counts, and the report rendered only from what the verifiers accepted.', inputSchema: NO_ARGS },
 ];
 
+export const VILLAIN_CONTRACT = [
+  'You are the Villain: you try to break this design\'s check suite. Propose faults; Kinux applies each one, runs every check with ngspice, and measures how much the circuit\'s behaviour changed (harm).',
+  'Your prize is a fault every check still passes but that changes behaviour (survived, harmful). A caught fault shows the checks work; that is also worth knowing.',
+  'Read kinux_villain_brief first: parts, nets, checks and what they measure, the analyses, the grammar, and the fixed catalog. Aim where no check looks.',
+  'Harm is measured only under the analyses and sources the suite already has. A fault that matters only in a condition no block simulates shows no harm; say so rather than claim it.',
+  'You never supply a result. NOT_CHECKED and ERROR are never a catch and never a miss. Finish with kinux_villain_report and tell the person which checks are missing, citing the evidence.',
+].join('\n');
+
+const FAULT_SCHEMA = { type: 'object', additionalProperties: false, properties: {
+  kind: { type: 'string', enum: ['value', 'open', 'short', 'operator'] },
+  ref: { type: 'string', maxLength: 40 }, pin: { type: 'number', minimum: 1, maximum: 64 },
+  factor: { type: 'number', minimum: 0.001, maximum: 1000 },
+  a: { type: 'string', maxLength: 80 }, b: { type: 'string', maxLength: 80 }, ohms: { type: 'number', minimum: 0.001, maximum: 1e9 },
+  operator: { type: 'string', maxLength: 40 }, target: { type: 'string', maxLength: 80 },
+} };
+
+export const VILLAIN_TOOLS = [
+  { name: 'kinux_villain_brief', description: 'Everything you plan from: every part (type, nodes, value), every net with its parts, every check (what it measures, whether it can catch a fault), the analyses, the fault grammar, the fixed operators\' catalog, and the faults tried so far.', inputSchema: NO_ARGS },
+  { name: 'kinux_inject_fault', description: [
+    'Inject ONE fault; Kinux runs every check on it and measures harm. Kinds:',
+    'value {ref, factor 0.001..1000}: multiply a part\'s value.',
+    'open {ref, pin}: disconnect one pin (1-based).',
+    'short {a, b, ohms?}: connect two nets (b "0" = ground) through ohms (default 0.001).',
+    'operator {operator, target}: a fault from the fixed catalog.',
+    'Returns status (killed / survived / not_checked / error), which checks caught it, harm (largest relative change of a net voltage or source current) and the evidence.'].join(' '),
+    inputSchema: FAULT_SCHEMA },
+  { name: 'kinux_villain_report', description: 'The faults tried so far: counts, and the missed faults ranked by harm, each with the net and numbers that show it.', inputSchema: NO_ARGS },
+];
+
 class ToolError extends Error {
   constructor(type, message, extra = {}) { super(message); this.type = type; this.extra = extra; }
 }
@@ -116,8 +148,8 @@ class ToolError extends Error {
 export function parseLaunchArgs(argv) {
   const opts = {};
   const known = new Set(['design', 'checks', 'sidecar', 'model-dir', 'thermal-model', 'runs-dir', 'intent', 'ngspice-compat', 'jobs', 'cache', 'call-log',
-    'role', 'doc', 'review-log']);
-  const literal = new Set(['ngspice-compat', 'jobs', 'role']);
+    'role', 'doc', 'review-log', 'villain-log', 'budget']);
+  const literal = new Set(['ngspice-compat', 'jobs', 'role', 'budget']);
   for (let i = 0; i < argv.length; i += 2) {
     const flag = argv[i];
     if (!flag?.startsWith('--') || !known.has(flag.slice(2)) || argv[i + 1] === undefined) {
@@ -129,8 +161,9 @@ export function parseLaunchArgs(argv) {
     else opts[key] = value;
   }
   opts.role ??= 'builder';
-  if (!['builder', 'reviewer'].includes(opts.role)) throw new Error('--role is builder or reviewer');
-  for (const req of opts.role === 'builder' ? ['design', 'checks'] : ['design']) if (!opts[req]) throw new Error(`--${req} is required`);
+  if (!['builder', 'reviewer', 'villain'].includes(opts.role)) throw new Error('--role is builder, reviewer or villain');
+  for (const req of opts.role === 'reviewer' ? ['design'] : ['design', 'checks']) if (!opts[req]) throw new Error(`--${req} is required`);
+  if (opts.budget !== undefined && !(/^\d+$/.test(opts.budget) && Number(opts.budget) >= 1 && Number(opts.budget) <= 1000)) throw new Error('--budget must be a whole number from 1 to 1000');
   for (const d of opts.doc ?? []) if (!existsSync(d)) throw new Error(`--doc ${d} does not exist`);
   if (opts['ngspice-compat'] !== undefined && opts['ngspice-compat'] !== 'psa') throw new Error('--ngspice-compat accepts only psa');
   if (opts.jobs !== undefined && !(/^\d+$/.test(opts.jobs) && Number(opts.jobs) >= 1 && Number(opts.jobs) <= 64)) throw new Error('--jobs must be a whole number from 1 to 64');
@@ -157,7 +190,8 @@ export function createServer(opts, { log = () => {} } = {}) {
   const activity = [];
   const summarise = (tool, r) => {
     if (!r || typeof r !== 'object') return {};
-    const keep = ['run_id', 'state', 'score_text', 'status', 'reason', 'id', 'kind', 'error', 'message', 'verified', 'rejected', 'open', 'proposals'];
+    const keep = ['run_id', 'state', 'score_text', 'status', 'reason', 'id', 'kind', 'error', 'message', 'verified', 'rejected', 'open', 'proposals',
+      'description', 'harm', 'harmful', 'killed_by', 'tried', 'killed', 'survived'];
     const out = Object.fromEntries(keep.filter(k => r[k] !== undefined).map(k => [k, typeof r[k] === 'string' ? r[k].slice(0, 300) : r[k]]));
     if (r.evidence?.measured !== undefined) out.measured = r.evidence.measured;
     if (r.evidence?.line !== undefined) out.cited_line = `${r.evidence.doc}:${r.evidence.line}`;
@@ -244,6 +278,37 @@ export function createServer(opts, { log = () => {} } = {}) {
       const count = k => r.log.filter(e => e.status === k).length;
       return { bundle_hash: r.bundle.hash, proposals: r.log.length, verified: count('verified'), rejected: count('rejected'), open: count('open'), report: renderReport(r) };
     },
+  };
+
+  let villainPromise = null;
+  const getVillain = () => (villainPromise ??= (async () => {
+    const { createVillain } = await import('../engine/villain.mjs');
+    const { loadSuite } = await import('../engine/cli.mjs');
+    let netlist;
+    if (/\.kicad_sch$/i.test(opts.design)) {
+      const { buildDesign } = await import('../engine/kicad-adapter.mjs');
+      netlist = (await buildDesign({ schematic: opts.design, sidecar: opts.sidecar, modelDir: opts['model-dir'], intent: opts.intent })).netlist;
+    } else netlist = readFileSync(opts.design, 'utf8');
+    const v = createVillain({ netlist, suite: loadSuite(opts.checks), compat: opts['ngspice-compat'] ?? null, budget: Number(opts.budget ?? 200) });
+    await v.init();
+    return v;
+  })());
+
+  const villainTools = {
+    kinux_villain_brief: async () => (await getVillain()).brief(),
+    kinux_inject_fault: async (args = {}) => {
+      const v = await getVillain();
+      const { VillainError } = await import('../engine/villain.mjs');
+      let rec;
+      try { rec = await v.inject(args); } catch (e) {
+        if (e instanceof VillainError) throw new ToolError('refused', e.message);
+        throw e;
+      }
+      if (opts['villain-log']) appendFileSync(opts['villain-log'], `${JSON.stringify(rec)}\n`);
+      const { results, ...brief } = rec;
+      return { ...brief, checks_run: results.length };
+    },
+    kinux_villain_report: async () => (await getVillain()).report(),
   };
 
   const tools = {
@@ -348,8 +413,8 @@ export function createServer(opts, { log = () => {} } = {}) {
   };
 
   const role = opts.role ?? 'builder';
-  const toolset = role === 'reviewer' ? REVIEW_TOOLS : TOOLS;
-  const impl = role === 'reviewer' ? reviewTools : tools;
+  const toolset = role === 'reviewer' ? REVIEW_TOOLS : role === 'villain' ? VILLAIN_TOOLS : TOOLS;
+  const impl = role === 'reviewer' ? reviewTools : role === 'villain' ? villainTools : tools;
 
   function validateArgs(tool, args) {
     if (args === undefined || args === null) return {};
@@ -382,7 +447,7 @@ export function createServer(opts, { log = () => {} } = {}) {
     const { id, method, params } = msg;
     if (method === 'initialize') {
       return { protocolVersion: PROTOCOL_VERSION, capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'kinux', version: '0.1.0' }, instructions: role === 'reviewer' ? REVIEW_CONTRACT : VERDICT_CONTRACT };
+        serverInfo: { name: 'kinux', version: '0.1.0' }, instructions: role === 'reviewer' ? REVIEW_CONTRACT : role === 'villain' ? VILLAIN_CONTRACT : VERDICT_CONTRACT };
     }
     if (method === 'ping') return {};
     if (method === 'tools/list') return { tools: toolset.map(t => ({ ...t, _meta: { schemaVersion: SCHEMA_VERSION, role: opts.role } })) };

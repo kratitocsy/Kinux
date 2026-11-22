@@ -58,6 +58,7 @@ export const SUITES = {
   'fea': ['ccx', 'gmsh'],
   'render': ['blender', 'kicad-cli'],
   'board-heat': ['ngspice', 'ccx'],
+  'villain': ['ngspice'],
   'viewer-studio': ['ngspice', 'ccx', 'kicad-cli'],
 };
 
