@@ -38,16 +38,17 @@ test('an edit that fixes a failing check is kept, with what it fixed; the origin
   const s = createDesignSession({ schematic: SCH, sidecar: SIDE, suite: WANT });
   const b = await s.brief();
   assert.deepEqual(b.failing, ['V(out) between 2.49 and 2.50']);
-  const r = await s.propose({ kind: 'value', ref: 'R3', value: '2M', why: 'output must sit at 2.49 .. 2.50 V' });
+  // Notes after the value stay in the field for the BOM (the live 555 run lost "C0G" before this).
+  const r = await s.propose({ kind: 'value', ref: 'R3', value: '2M 1%', why: 'output must sit at 2.49 .. 2.50 V' });
   assert.equal(r.status, 'kept', JSON.stringify(r));
   assert.deepEqual(r.fixed.map(f => f.check), ['V(out) between 2.49 and 2.50']);
   assert.ok(r.fixed[0].now > 2.49 && r.fixed[0].was < 2.49);
   const d = s.diff();
-  assert.match(d.diff, /^\+.*\(property "Value" "2M"/m);
-  assert.deepEqual(d.kept.map(k => k.description), ['R3 value 1M -> 2M']);
+  assert.match(d.diff, /^\+.*\(property "Value" "2M 1%"/m);
+  assert.deepEqual(d.kept.map(k => k.description), ['R3 value 1M -> 2M 1%']);
   assert.equal(readFileSync(SCH, 'utf8'), before.sch, 'the original schematic is never written');
   assert.equal(readFileSync(SIDE, 'utf8'), before.side);
-  assert.match(readFileSync(d.schematic, 'utf8'), /\(property "Value" "2M"/, 'the edit is in the session copy');
+  assert.match(readFileSync(d.schematic, 'utf8'), /\(property "Value" "2M 1%"/, 'the edit is in the session copy');
 });
 
 test('refusals: no reason, a regression, no fix, and a value that is not one; each one leaves the copy as it was', async () => {

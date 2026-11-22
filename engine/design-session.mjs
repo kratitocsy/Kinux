@@ -146,7 +146,9 @@ export function createDesignSession({ schematic, sidecar, modelDir, intent, suit
         const value = String(edit.value ?? '').trim();
         if (!SAFE_VALUE.test(value)) throw new DesignError('a value is up to 40 plain characters');
         const k = kindOf(ref);
-        if (k) { const p = parseKicadValue(value, k); if (!p.ok) throw new DesignError(`"${value}" is not a ${k} value: ${p.why}`); }
+        // Read the value the way the adapter does: the first token is the value, and notes after it
+        // (a dielectric, a tolerance: "180pF C0G", "10k 1%") are kept in the field for the BOM.
+        if (k) { const head = value.split(/\s+/)[0]; const p = parseKicadValue(head, k); if (!p.ok) throw new DesignError(`"${head}" is not a ${k} value: ${p.why}`); }
         const { text, from } = setSymbolValue(snapshot.sch, ref, value);
         if (from === value) throw new DesignError(`${ref} is already ${value}`);
         writeFileSync(sch, text);
