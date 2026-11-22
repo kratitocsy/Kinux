@@ -19,6 +19,7 @@ import { isGround } from './netlist.mjs';
 
 const SAFE_NET = /^[A-Za-z0-9_./:+-]+$/;
 export const MAX_NETS = 8;
+export const DETAIL_POINTS = 1500;
 const sha256 = buf => `sha256:${createHash('sha256').update(buf).digest('hex')}`;
 
 /** Nets a block looks at, in order: scope first, then V() and f() targets. */
@@ -90,10 +91,15 @@ export async function captureWaveforms(netlist, suite, { compat = null, timeoutM
       const { cols } = parseWrdata(text);
       if (cols.length !== nets.length + 1 || cols[0].length < 2) continue;
       const d = decimate(cols[0], cols.slice(1), maxPoints);
+      // The end of the run at full resolution: decimation keeps peaks but not
+      // the shape of a fast signal, so the last samples are kept as they are.
+      const n = cols[0].length, from = Math.max(0, n - DETAIL_POINTS);
+      const detail = d.decimated ? { x: cols[0].slice(from), series: cols.slice(1).map(c => c.slice(from)) } : null;
       const payload = {
         solver: 'ngspice', ngspice_compat: compat, analysis: block.analysis.raw, block: block.prefix,
         points: cols[0].length, decimated: d.decimated, x: { name: 'time', unit: 's', values: d.time },
         series: nets.map((n, i) => ({ name: `V(${n})`, unit: 'V', values: d.series[i] })),
+        ...(detail ? { detail: { note: `the last ${detail.x.length} samples, not decimated`, x: detail.x, series: detail.series } } : {}),
       };
       const file = `wave-${block.prefix}.json`;
       const buf = Buffer.from(`${JSON.stringify(payload)}\n`);

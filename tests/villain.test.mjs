@@ -109,9 +109,14 @@ test('element modes cover every way one part can fail, and parallel agents never
   const out = await Promise.allSettled([1, 2, 3].map(() => v.inject({ kind: 'value', ref: 'R3', factor: 10 }, { agent: 'R3' })));
   assert.equal(out.filter(o => o.status === 'fulfilled').length, 1, 'three agents, one fault: solved once');
   assert.ok(out.filter(o => o.status === 'rejected').every(o => /same faulted circuit/.test(o.reason.message)));
+  // The same bridge proposed by two agents, either way round, is one circuit (the live team ran one short 4 times before this).
+  await v.inject({ kind: 'short', a: 'mid', b: 'out', ohms: 10 }, { agent: 'R3' });
+  await assert.rejects(v.inject({ kind: 'short', a: 'out', b: 'mid', ohms: 10 }, { agent: 'RL' }), /same faulted circuit/);
+  await v.inject({ kind: 'open', ref: 'C2', pin: 1 }, { agent: 'C2' });
+  await assert.rejects(v.inject({ kind: 'operator', operator: 'open_connection', target: 'C2.0' }, { agent: 'lead' }), /same faulted circuit/);
   const rep = v.report();
-  assert.equal(rep.per_element.R3.tried, 1);
-  assert.ok(rep.untouched.includes('C2'));
+  assert.equal(rep.per_element.R3.tried, 2);
+  assert.ok(rep.untouched.includes('C1'), rep.untouched.join(','));
 });
 
 test('floating nets are never evidence: not on the baseline, and not as a raw number under a fault', async () => {

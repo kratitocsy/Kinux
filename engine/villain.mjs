@@ -87,7 +87,7 @@ export function faultPatch(netlist, fault, n = 1) {
       const pin = Number(fault.pin);
       if (!Number.isInteger(pin) || pin < 1 || pin > c.nodes.length) throw new VillainError(`${c.refdes} has pins 1..${c.nodes.length}`);
       const nodes = [...c.nodes]; const was = nodes[pin - 1];
-      nodes[pin - 1] = `NC_V${n}_${c.refdes}_${pin}`;
+      nodes[pin - 1] = `NC_${c.refdes}_${pin - 1}`; // as open_connection names it: the same fault is the same circuit
       return { operator: 'villain_open', target: c.refdes, layer: 'netlist', description: `${c.refdes} pin ${pin} opened (was on ${was})`,
         changes: [replace(c, renderElement({ indent: c.indent, refdes: c.refdes, nodes, tail: c.tail }))], meta: { kind: 'topology' } };
     }
@@ -99,8 +99,11 @@ export function faultPatch(netlist, fault, n = 1) {
       const ohms = fault.ohms === undefined ? 1e-3 : Number(fault.ohms);
       if (!Number.isFinite(ohms) || ohms < 1e-3 || ohms > 1e9) throw new VillainError('ohms must be 0.001..1e9');
       const last = netlist.components[netlist.components.length - 1];
+      // Canonical: the same bridge is the same circuit whichever way round, and whoever proposes it.
+      const [p1, p2] = isGround(b) ? [a, '0'] : isGround(a) ? [b, '0'] : [a, b].sort();
+      const name = `RVIL_${createHash('sha256').update(`${p1}|${p2}`).digest('hex').slice(0, 8)}`;
       return { operator: 'villain_short', target: `${a}~${b}`, layer: 'netlist', description: `${a} shorted to ${isGround(b) ? 'ground' : b} through ${ohms} ohm`,
-        changes: [{ type: 'insert_after', line_id: last.id, text: `RVIL${n} ${a} ${b} ${ohms}` }], meta: { kind: 'topology', ohms } };
+        changes: [{ type: 'insert_after', line_id: last.id, text: `${name} ${p1} ${p2} ${ohms}` }], meta: { kind: 'topology', ohms } };
     }
     case 'operator': {
       const op = operatorById(String(fault.operator ?? ''));

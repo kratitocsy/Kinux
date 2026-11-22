@@ -24,7 +24,9 @@ How to work:
    - catalog operators that target it.
    Skip a mode only if an earlier result makes it pointless, and say why.
 3. Always pass agent = your element's reference on kinux_inject_fault. Respect the budget in the
-   brief (budget_left is shared by every agent). Use at most 12 faults.
+   brief (budget_left is shared by every agent). Use at most the cap your task gives you (12 if none).
+   If Kinux refuses a fault as "the same faulted circuit" as another, another agent already ran it:
+   read its result in tried, and move on.
 4. Finish with a short report, using only numbers Kinux returned:
    - each MISSED fault with harm >= 0.05: id, the fault, and the evidence (vector, baseline, faulted);
    - the detection boundary you found for value faults, if any;

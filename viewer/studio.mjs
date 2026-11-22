@@ -335,10 +335,20 @@ export function checkTrace(state, testId, shown) {
 function traceCard(state, testId, shown, total, colour) {
   const { t, pts, nums, lims } = checkTrace(state, testId, shown);
   if (!nums.length) return null;
-  let lo = Math.min(...nums, ...lims), hi = Math.max(...nums, ...lims);
+  // The axis is set by the design's own value and the check's limits, widened
+  // to include faults that land nearby. A fault that lands far off (a solver
+  // number of 1e129 from a collapsed circuit) is drawn pinned to the edge with
+  // a triangle, so it can never flatten the rest of the trace.
+  const anchor = [pts[0]?.v, ...lims].filter(v => v !== null && v !== undefined && Number.isFinite(v));
+  const aLo = anchor.length ? Math.min(...anchor) : Math.min(...nums), aHi = anchor.length ? Math.max(...anchor) : Math.max(...nums);
+  const reach = Math.max(aHi - aLo, Math.abs(aHi), Math.abs(aLo), 1e-12) * 4;
+  const near = nums.filter(v => v >= aLo - reach && v <= aHi + reach);
+  let lo = Math.min(aLo, ...near), hi = Math.max(aHi, ...near);
   if (hi === lo) { hi += Math.abs(hi) * 0.1 || 1; lo -= Math.abs(lo) * 0.1 || 1; }
   const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
-  const W = 300, H = 78, X = i => (total ? (i / total) * W : 0), Y = v => 2 + ((hi - v) / (hi - lo)) * 74;
+  const W = 300, H = 78, X = i => (total ? (i / total) * W : 0);
+  const Y = v => 2 + ((hi - Math.min(hi, Math.max(lo, v))) / (hi - lo)) * 74;
+  const off = pts.filter(p => p.v !== null && (p.v > hi || p.v < lo));
   let d = '';
   pts.forEach((p, k) => { if (p.v === null) return; d += `${k && pts[k - 1].v !== null ? 'L' : 'M'}${X(p.i).toFixed(1)},${Y(p.v).toFixed(1)}`; });
   const last = pts.at(-1);
@@ -347,6 +357,7 @@ function traceCard(state, testId, shown, total, colour) {
     svgEl('path', { d: 'M50 0V78M100 0V78M150 0V78M200 0V78M250 0V78M0 20H300M0 58H300', stroke: '#1A202B', 'stroke-width': 1, 'vector-effect': 'non-scaling-stroke' }),
     ...lims.map(l => svgEl('path', { d: `M0 ${Y(l).toFixed(1)}H300`, stroke: '#F59E0B', 'stroke-width': 1, 'stroke-dasharray': '4 3', 'vector-effect': 'non-scaling-stroke', opacity: 0.8 })),
     svgEl('path', { d, fill: 'none', stroke: colour, 'stroke-width': 1.6, 'stroke-linejoin': 'round', 'vector-effect': 'non-scaling-stroke' }),
+    ...off.map(p => svgEl('path', { d: p.v > hi ? `M${X(p.i) - 3} 7L${X(p.i)} 1L${X(p.i) + 3} 7Z` : `M${X(p.i) - 3} 71L${X(p.i)} 77L${X(p.i) + 3} 71Z`, fill: '#F59E0B' })),
     ...pts.filter(p => p.v !== null && p.verdict === 'FAIL').map(p => svgEl('circle', { cx: X(p.i), cy: Y(p.v), r: 2.2, fill: '#34D399', 'vector-effect': 'non-scaling-stroke' })),
   ]);
   return el('div', { class: 'kv-trace', 'data-testid': 'studio-trace', 'data-test': testId }, [
@@ -359,6 +370,12 @@ function traceCard(state, testId, shown, total, colour) {
 }
 
 function waveCard(payload, colourIdx) {
+  // A fast signal (more edges than the plot has pixels) is shown by its final
+  // samples at full resolution, as the solver wrote them.
+  const crossingsOf = y => { const m = (Math.max(...y) + Math.min(...y)) / 2; let c = 0; for (let i = 1; i < y.length; i++) if ((y[i - 1] - m) * (y[i] - m) < 0) c++; return c; };
+  const zoom = payload.detail && crossingsOf(payload.series[0].values) > 60;
+  const view = zoom ? { x: { values: payload.detail.x }, series: payload.series.map((s, k) => ({ ...s, values: payload.detail.series[k] })) } : payload;
+  payload = { ...payload, x: view.x, series: view.series, zoomNote: zoom ? `last ${tickText(payload.detail.x.at(-1) - payload.detail.x[0], 3)}s, full resolution` : null };
   const xs = payload.x.values, colours = ['#38BDF8', '#FB923C', '#34D399', '#C4B5FD'];
   const all = payload.series.flatMap(s => s.values);
   const lo = Math.min(...all), hi = Math.max(...all), span = hi - lo || 1, x0 = xs[0], xs1 = xs.at(-1) - x0 || 1;
@@ -370,7 +387,7 @@ function waveCard(payload, colourIdx) {
   return el('div', { class: 'kv-trace', 'data-testid': 'studio-wave' }, [
     el('div', { class: 'kv-trace-ticks' }, ticks(lo, hi).map(v => el('span', { text: tickText(v) }))),
     el('div', { class: 'kv-trace-plot' }, [svg, el('div', { class: 'kv-trace-label' }, [el('span', { class: 'kv-trace-name', text: payload.series.slice(0, 2).map(s => s.name).join(', ') }),
-      el('span', { class: 'kv-trace-val tone-idle', text: `${payload.analysis}` })])]),
+      el('span', { class: 'kv-trace-val tone-idle', text: payload.zoomNote ?? `${payload.analysis}` })])]),
   ]);
 }
 
