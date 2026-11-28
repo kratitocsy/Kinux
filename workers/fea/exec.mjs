@@ -9,8 +9,9 @@
 
 import { execFile } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 export const CCX_BIN = process.env.KINUX_CCX_BIN || 'ccx';
 export const GMSH_BIN = process.env.KINUX_GMSH_BIN || 'gmsh';
@@ -86,6 +87,11 @@ export async function cleanup(dir) {
   if (dir) await rm(dir, { recursive: true, force: true });
 }
 
+function whichSync(bin) {
+  for (const d of ['/usr/bin', '/bin', '/usr/local/bin']) { const p = join(d, bin); if (existsSync(p)) return p; }
+  return null;
+}
+
 const cache = new Map();
 /** Tool versions for the receipt, parsed from the binaries' own output. */
 export async function toolVersions({ force = false } = {}) {
@@ -102,8 +108,17 @@ export async function toolVersions({ force = false } = {}) {
       ccx: { available: !c.spawnError && Boolean(cm), version: cm ? cm[1] : null, error: c.spawnError },
       gmsh: { available: !g.spawnError && Boolean(gm), version: gm ? gm[1] : null, error: g.spawnError },
     };
+    // The numerical libraries ccx is linked against, resolved through any
+    // alternatives symlinks: installing OpenBLAS or MKL switches them silently
+    // and changes the last bits. docs/DETERMINISM-PLAN.md §2.
+    v.libs = {};
+    const ldd = await runBinary('/usr/bin/ldd', [CCX_BIN.includes('/') ? CCX_BIN : (whichSync(CCX_BIN) ?? CCX_BIN)], { cwd: dir, timeoutMs: 10_000 });
+    for (const m of `${ldd.stdout}`.matchAll(/^\s*(lib(spooles|arpack|lapack|blas|openblas|mkl\w*|pastix|pardiso)[^\s]*)\s+=>\s+(\S+)/gim)) {
+      try { v.libs[m[2].toLowerCase()] = realpathSync(m[3]); } catch { v.libs[m[2].toLowerCase()] = m[3]; }
+    }
     v.ids = {};
     if (v.ccx.version) v.ids.calculix = `ccx-${v.ccx.version}`;
+    if (Object.keys(v.libs).length) v.ids.calculix_libs = Object.entries(v.libs).sort().map(([k, p]) => `${k}=${basename(p)}`).join(',');
     if (v.gmsh.version) v.ids.gmsh = `gmsh-${v.gmsh.version}`;
     cache.set('v', v);
     return v;

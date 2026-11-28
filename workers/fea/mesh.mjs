@@ -6,6 +6,7 @@
 // keep only the volume elements, and keep the boundary faces as node sets and
 // face lists; the solver deck is written fresh by deck.mjs.
 
+import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { GMSH_BIN, runBinary, makeWorkDir, cleanup } from './exec.mjs';
@@ -89,6 +90,24 @@ function meshStats(model) {
  * @param {{size:number, order?:1|2, timeoutMs?:number}} opts
  * @returns {Promise<{ok:true, model, stats, mesh_size} | {ok:false, reason_code, reason}>}
  */
+/**
+ * Options pinned on every mesh, never taken from user input or Gmsh's defaults
+ * (which change between versions). Measured on gmsh 4.12.1 on this project's
+ * machine: at 4 threads the same model gave 6 different meshes in 6 runs, and
+ * pinning only some of the per-dimension thread counts did not fix it; all
+ * three at 1 did. The seed and algorithms are this version's defaults, written
+ * down so an upgrade cannot change them silently. docs/DETERMINISM-PLAN.md §4.2.
+ */
+export const GMSH_PINNED = Object.freeze({
+  'General.NumThreads': 1,
+  'Mesh.MaxNumThreads1D': 1,
+  'Mesh.MaxNumThreads2D': 1,
+  'Mesh.MaxNumThreads3D': 1,
+  'Mesh.RandomSeed': 1,
+  'Mesh.Algorithm': 6,
+  'Mesh.Algorithm3D': 1,
+});
+
 export async function meshGeometry({ geoText, trusted = false }, { size, order = 2, timeoutMs = 60_000 } = {}) {
   if (!trusted) {
     const s = sanitizeGeo(geoText);
@@ -103,7 +122,8 @@ export async function meshGeometry({ geoText, trusted = false }, { size, order =
   try {
     await writeFile(join(dir, 'model.geo'), geoText, 'utf8');
     const args = ['model.geo', '-3', '-order', String(order), '-clmax', String(size),
-      '-format', 'inp', '-o', 'mesh.inp', '-nt', '1', '-setnumber', 'Mesh.SaveGroupsOfNodes', '1'];
+      '-format', 'inp', '-o', 'mesh.inp', '-nt', '1', '-setnumber', 'Mesh.SaveGroupsOfNodes', '1',
+      ...Object.entries(GMSH_PINNED).flatMap(([k, v]) => ['-setnumber', k, String(v)])];
     const r = await runBinary(GMSH_BIN, args, { cwd: dir, timeoutMs });
     const log = `${r.stdout}\n${r.stderr}`;
     if (r.spawnError) return { ok: false, reason_code: 'tool_missing', reason: r.spawnError };
@@ -118,7 +138,7 @@ export async function meshGeometry({ geoText, trusted = false }, { size, order =
     try { model = extractModel(parseGmshInp(text)); } catch (e) { return { ok: false, reason_code: 'mesh_failed', reason: `could not parse gmsh output: ${e.message}` }; }
     if (!model.elements.length) return { ok: false, reason_code: 'mesh_failed', reason: 'gmsh produced no volume elements' };
     if (model.elementTypes.length !== 1) return { ok: false, reason_code: 'mesh_failed', reason: `mixed element types ${model.elementTypes.join(',')}` };
-    return { ok: true, model, stats: meshStats(model), mesh_size: size, gmsh_warnings: log.split('\n').filter(l => /^Warning\s*:/.test(l)) };
+    return { ok: true, model, stats: meshStats(model), mesh_size: size, mesh_sha256: `sha256:${createHash('sha256').update(text).digest('hex')}`, gmsh_options: GMSH_PINNED, gmsh_warnings: log.split('\n').filter(l => /^Warning\s*:/.test(l)) };
   } finally {
     await cleanup(dir);
   }

@@ -133,7 +133,7 @@ export function heatDeck({ W, H, t, size, k, inputs, loads }) {
   lines.push('*NSET, NSET=NALL, GENERATE', `1, ${nid(nx, ny, 1)}, 1`);
   lines.push('*MATERIAL, NAME=BOARD', '*CONDUCTIVITY, TYPE=ORTHO', `${f(k.in_plane)}, ${f(k.in_plane)}, ${f(k.through)}`, '*SOLID SECTION, ELSET=EALL, MATERIAL=BOARD');
   lines.push('*INITIAL CONDITIONS, TYPE=TEMPERATURE', `NALL, ${f(inputs.ambient_c.value)}`);
-  lines.push('*STEP', '*HEAT TRANSFER, STEADY STATE');
+  lines.push('*STEP', '*HEAT TRANSFER, STEADY STATE, SOLVER=SPOOLES');
   // Faces of a DC3D8 with nodes 1-4 at z=0 and 5-8 at z=t: S1/F1 bottom, S2/F2 top.
   const flux = [];
   let applied = 0;

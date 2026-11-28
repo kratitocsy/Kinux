@@ -53,6 +53,25 @@ export function parseDat(text) {
   return { blocks, eigen };
 }
 
+/**
+ * Check, from ccx's own log, that the pins took effect: every stage ran on one
+ * CPU and, where a system was factored, SPOOLES did it. Measured with ccx 2.21:
+ * at 4 threads SPOOLES gave run-to-run differences near 1e-6, and the default
+ * solver is the first one the build has (another build may pick PARDISO or
+ * PaStiX silently). A run that did not obey is not evidence: refused.
+ * docs/DETERMINISM-PLAN.md §4.3.
+ * @returns {{ok:true, threads:number, solver:string|null} | {ok:false, reason:string}}
+ */
+export function checkCcxLog(log) {
+  const cpus = [...String(log).matchAll(/Using up to (\d+) cpu/gi)].map(m => Number(m[1]));
+  const over = cpus.filter(n => n !== 1);
+  if (over.length) return { ok: false, reason: `ccx ran a stage on ${Math.max(...over)} CPUs despite the single-thread pins` };
+  const fact = /Factoring the system of equations using the (.+?) solver/i.exec(String(log));
+  const solver = fact ? fact[1].toLowerCase() : null;
+  if (solver && !/spooles/.test(solver)) return { ok: false, reason: `ccx factored with "${fact[1]}", not SPOOLES` };
+  return { ok: true, threads: cpus.length ? 1 : null, solver };
+}
+
 const DECK_PROBLEMS = /Card image cannot be interpreted|does not exist|not applicable|unknown|not recognized/i;
 
 export function classifyCcxFailure({ log = '', timedOut = false, spawnError = null } = {}) {
@@ -104,8 +123,11 @@ export async function runCcx(deck, { generated = false, files = {}, timeoutMs = 
     if (generated && deckProblems.length) {
       return { ...base, ok: false, blocked: false, stage: 'run', reason_code: 'tool_error', reason: `ccx ignored part of the generated deck:\n${deckProblems.join('\n')}`.slice(0, 2000) };
     }
+    // The pins are only trusted if ccx says it obeyed them.
+    const obeyed = checkCcxLog(log);
+    if (!obeyed.ok) return { ...base, ok: false, blocked: false, stage: 'run', reason_code: 'tool_error', reason: obeyed.reason };
     const parsed = parseDat(dat);
-    return { ...base, ok: true, blocked: false, stage: 'run', dat, ...parsed };
+    return { ...base, ok: true, blocked: false, stage: 'run', dat, solver: obeyed.solver, threads: obeyed.threads, ...parsed };
   } finally {
     await cleanup(dir);
   }

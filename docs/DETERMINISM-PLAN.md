@@ -269,6 +269,18 @@ That is about 4–5 weeks of work, shortened by running W3–W5 in parallel.
 
 ---
 
+## 8b. Progress
+
+- **W4 (FEA hardening): done** (Gmsh and CalculiX).
+  - Every mesh pins `General.NumThreads`, `Mesh.MaxNumThreads1D/2D/3D`, `Mesh.RandomSeed`, `Mesh.Algorithm` and `Mesh.Algorithm3D`. It records them and the mesh hash.
+  - Every generated deck names `SOLVER=SPOOLES`.
+  - ccx's own log is checked, and a run that used more than one CPU, or another solver, is refused (`checkCcxLog`).
+  - The resolved SPOOLES, ARPACK, LAPACK and BLAS libraries are recorded in `tool_versions.calculix_libs`.
+  - Tests:
+    - the same input meshes to the same bytes;
+    - **unpinned 4-thread Gmsh does not reproduce its own mesh**, so the pins are shown to carry load;
+    - a real solve reports one CPU and SPOOLES.
+
 ## 9. Open risks
 
 - **Untested OCCT algorithms.** Other OCCT algorithms may depend on heap order (only offset and shell is documented). Mitigation: fresh processes and double-run tests on every operation we use.

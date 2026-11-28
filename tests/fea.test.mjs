@@ -415,3 +415,63 @@ test('every result produced in this file is a valid contract event', () => {
     if (ev.data.verdict === 'PASS') assert.equal(typeof ev.data.measured, 'number');
   }
 });
+
+// --- determinism hardening (docs/DETERMINISM-PLAN.md §4.2, §4.3) ------------------
+
+import { GMSH_PINNED } from '../workers/fea/mesh.mjs';
+import { checkCcxLog } from '../workers/fea/ccx.mjs';
+
+test('ccx log check: one CPU and SPOOLES pass; more threads or another solver are refused', () => {
+  const good = ' Using up to 1 cpu(s) for setting up the structure of the matrix.\n Factoring the system of equations using the symmetric spooles solver\n Using up to 1 cpu(s) for spooles.\n';
+  assert.deepEqual(checkCcxLog(good), { ok: true, threads: 1, solver: 'symmetric spooles' });
+  const threaded = good.replace('Using up to 1 cpu(s) for spooles', 'Using up to 4 cpu(s) for spooles');
+  assert.match(checkCcxLog(threaded).reason, /4 CPUs despite the single-thread pins/);
+  const pardiso = good.replace('symmetric spooles solver', 'pardiso solver');
+  assert.match(checkCcxLog(pardiso).reason, /not SPOOLES/);
+  assert.equal(checkCcxLog('no stages logged').ok, true, 'a log with no factoring (e.g. heat with no solve) is not refused for that');
+});
+
+test('a real solve reports that it ran on one CPU with SPOOLES', async () => {
+  const s = await STATIC();
+  assert.ok(s.study.ok, s.study.reason);
+  const r = await runCcx(['*NODE, NSET=N', '1,0,0,0', '2,1,0,0', '3,0,1,0', '4,0,0,1', '*ELEMENT, TYPE=C3D4, ELSET=E', '1,1,2,3,4',
+    '*MATERIAL, NAME=M', '*ELASTIC', '210000,0.3', '*SOLID SECTION, ELSET=E, MATERIAL=M', '*BOUNDARY', '1,1,3', '2,2,3', '3,3',
+    '*STEP', '*STATIC, SOLVER=SPOOLES', '*CLOAD', '4,3,1', '*NODE PRINT, NSET=N', 'U', '*END STEP', ''].join('\n'), { generated: true });
+  assert.equal(r.ok, true, r.reason);
+  assert.equal(r.threads, 1);
+  assert.match(r.solver, /spooles/);
+});
+
+test('the receipt records the numerical libraries ccx is linked against, resolved', async () => {
+  const v = await toolVersions({ force: true });
+  assert.match(v.ids.calculix_libs ?? '', /spooles=/, 'SPOOLES must be recorded');
+  assert.match(v.ids.calculix_libs, /blas=/, 'and the BLAS that alternatives resolve to');
+});
+
+test('every mesh is made with the pinned options, and the same input meshes to the same bytes', async () => {
+  assert.equal(GMSH_PINNED['Mesh.MaxNumThreads3D'], 1);
+  assert.equal(GMSH_PINNED['Mesh.RandomSeed'], 1);
+  const geo = boxGeo({ L: 40, W: 10, H: 6 });
+  const a = await meshGeometry({ geoText: geo, trusted: true }, { size: 3, order: 2 });
+  const b = await meshGeometry({ geoText: geo, trusted: true }, { size: 3, order: 2 });
+  assert.equal(a.ok && b.ok, true);
+  assert.equal(a.mesh_sha256, b.mesh_sha256);
+  assert.deepEqual(a.gmsh_options, GMSH_PINNED, 'the options are recorded with the mesh');
+});
+
+test('THE PINS CARRY LOAD: unpinned multi-threaded Gmsh does not reproduce its own mesh', async t => {
+  // The model the experiment used: a box with a hole, second order. Pinned, it is identical every time
+  // (the test above); with 4 threads Gmsh 4.12.1 gave 6 different meshes in 6 runs.
+  const dir = await mkdtemp(join(tmpdir(), 'kinux-gmsh-mt-'));
+  try {
+    await writeFile(join(dir, 'm.geo'), 'SetFactory("OpenCASCADE");\nBox(1) = {0,0,0, 10,4,2};\nCylinder(2) = {5,2,-1, 0,0,4, 1};\nBooleanDifference{ Volume{1}; Delete; }{ Volume{2}; Delete; }\n');
+    const hashes = new Set();
+    for (let i = 0; i < 4; i++) {
+      const r = await runBinary(GMSH_BIN, ['m.geo', '-3', '-order', '2', '-clmax', '0.4', '-format', 'inp', '-o', 'm.inp', '-nt', '4',
+        '-setnumber', 'Mesh.MaxNumThreads1D', '4', '-setnumber', 'Mesh.MaxNumThreads2D', '4', '-setnumber', 'Mesh.MaxNumThreads3D', '4', '-setnumber', 'Mesh.Algorithm3D', '10'], { cwd: dir, timeoutMs: 120_000 });
+      if (r.code !== 0) { t.skip(`gmsh could not mesh unpinned here: ${r.stderr.slice(0, 200)}`); return; }
+      hashes.add((await readFile(join(dir, 'm.inp'), 'utf8')).split('\n').slice(2).join('\n'));
+    }
+    assert.ok(hashes.size > 1, 'if unpinned meshing were repeatable here, the thread pins would be untested: investigate before trusting them');
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
